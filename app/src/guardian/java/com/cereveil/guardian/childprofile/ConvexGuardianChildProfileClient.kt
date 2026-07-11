@@ -12,6 +12,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.emitAll
 import com.cereveil.guardian.auth.GuardianInstallationIdProvider
+import com.cereveil.guardian.auth.GuardianOperationBootstrapper
 
 internal const val CREATE_CHILD_PROFILE_FUNCTION_PATH =
   "modules/childProfiles/public:createChildProfile"
@@ -21,6 +22,7 @@ internal const val LIST_CHILD_PROFILES_FUNCTION_PATH =
 class ConvexGuardianChildProfileClient(
   private val convexClient: ConvexClient,
   private val installationIdProvider: GuardianInstallationIdProvider,
+  private val bootstrapper: GuardianOperationBootstrapper,
 ) :
   GuardianChildProfileClient {
   override suspend fun createChildProfile(
@@ -30,7 +32,7 @@ class ConvexGuardianChildProfileClient(
       if (!prepareAuth()) {
         return GuardianChildProfileResult.Failure(GuardianChildProfileError.Unauthenticated)
       }
-      val installationId = installationIdProvider.getInstallationId()
+      val installationId = installationIdAfterBootstrap()
         ?: return GuardianChildProfileResult.Failure(GuardianChildProfileError.BootstrapRequired)
 
       val response =
@@ -57,7 +59,7 @@ class ConvexGuardianChildProfileClient(
       if (!prepareAuth()) {
         return GuardianChildProfileListResult.Failure(GuardianChildProfileError.Unauthenticated)
       }
-      val installationId = installationIdProvider.getInstallationId()
+      val installationId = installationIdAfterBootstrap()
         ?: return GuardianChildProfileListResult.Failure(GuardianChildProfileError.BootstrapRequired)
 
       val response =
@@ -75,7 +77,7 @@ class ConvexGuardianChildProfileClient(
 
   override fun observeChildProfiles(): Flow<GuardianChildProfileListResult> =
     kotlinx.coroutines.flow.flow {
-      val installationId = installationIdProvider.getInstallationId()
+      val installationId = installationIdAfterBootstrap()
       if (installationId == null) {
         emit(GuardianChildProfileListResult.Failure(GuardianChildProfileError.BootstrapRequired))
         return@flow
@@ -90,6 +92,12 @@ class ConvexGuardianChildProfileClient(
         )
       })
     }
+
+  private suspend fun installationIdAfterBootstrap(): String? {
+    installationIdProvider.getInstallationId()?.let { return it }
+    if (!bootstrapper.ensureBootstrapped()) return null
+    return installationIdProvider.getInstallationId()
+  }
 
   @Suppress("UNCHECKED_CAST")
   private suspend fun prepareAuth(): Boolean {

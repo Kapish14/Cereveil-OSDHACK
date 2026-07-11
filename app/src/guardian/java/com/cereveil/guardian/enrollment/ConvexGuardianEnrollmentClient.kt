@@ -10,6 +10,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import com.cereveil.guardian.auth.GuardianInstallationIdProvider
+import com.cereveil.guardian.auth.GuardianOperationBootstrapper
 
 private const val CREATE_CODE = "modules/deviceIdentity/guardian:createEnrollmentCode"
 private const val CANCEL_CODE = "modules/deviceIdentity/guardian:cancelEnrollmentCode"
@@ -18,13 +19,14 @@ private const val ENROLLMENT_SUMMARY = "modules/deviceIdentity/guardian:getEnrol
 class ConvexGuardianEnrollmentClient(
   private val convex: ConvexClient,
   private val installationIdProvider: GuardianInstallationIdProvider,
+  private val bootstrapper: GuardianOperationBootstrapper,
 ) : GuardianEnrollmentClient {
   override suspend fun createCode(
     childProfileId: String
   ): GuardianEnrollmentResult<GuardianEnrollmentCode> =
     try {
       if (!prepareAuth()) return GuardianEnrollmentResult.Failure(GuardianEnrollmentError.Unauthenticated)
-      val installationId = installationIdProvider.getInstallationId()
+      val installationId = installationIdAfterBootstrap()
         ?: return GuardianEnrollmentResult.Failure(GuardianEnrollmentError.BootstrapRequired)
       val response = convex.mutation<Map<String, Any?>>(CREATE_CODE, mapOf(
         "guardianInstallationId" to installationId,
@@ -47,7 +49,7 @@ class ConvexGuardianEnrollmentClient(
   override suspend fun cancelCode(enrollmentCodeId: String): GuardianEnrollmentResult<Unit> =
     try {
       if (!prepareAuth()) return GuardianEnrollmentResult.Failure(GuardianEnrollmentError.Unauthenticated)
-      val installationId = installationIdProvider.getInstallationId()
+      val installationId = installationIdAfterBootstrap()
         ?: return GuardianEnrollmentResult.Failure(GuardianEnrollmentError.BootstrapRequired)
       convex.mutation<Any?>(CANCEL_CODE, mapOf(
         "guardianInstallationId" to installationId,
@@ -64,7 +66,7 @@ class ConvexGuardianEnrollmentClient(
     childProfileId: String
   ): Flow<GuardianEnrollmentResult<GuardianEnrollmentSummary>> =
     kotlinx.coroutines.flow.flow {
-      val installationId = installationIdProvider.getInstallationId()
+      val installationId = installationIdAfterBootstrap()
       if (installationId == null) {
         emit(GuardianEnrollmentResult.Failure(GuardianEnrollmentError.BootstrapRequired))
         return@flow
@@ -95,6 +97,12 @@ class ConvexGuardianEnrollmentClient(
   private suspend fun prepareAuth(): Boolean {
     val authenticated = convex as? ConvexClientWithAuth<String> ?: return true
     return authenticated.loginFromCache().isSuccess
+  }
+
+  private suspend fun installationIdAfterBootstrap(): String? {
+    installationIdProvider.getInstallationId()?.let { return it }
+    if (!bootstrapper.ensureBootstrapped()) return null
+    return installationIdProvider.getInstallationId()
   }
 }
 

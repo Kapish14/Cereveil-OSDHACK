@@ -62,6 +62,10 @@ interface GuardianInstallationIdProvider {
   suspend fun getInstallationId(): String?
 }
 
+interface GuardianOperationBootstrapper {
+  suspend fun ensureBootstrapped(): Boolean
+}
+
 interface GuardianAuthClient {
   suspend fun bootstrapGuardian(request: GuardianBootstrapRequest): GuardianBootstrapResult
 }

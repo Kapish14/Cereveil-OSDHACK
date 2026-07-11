@@ -39,6 +39,7 @@ import com.google.zxing.BarcodeFormat
 import com.google.zxing.qrcode.QRCodeWriter
 import kotlinx.coroutines.delay
 import com.cereveil.guardian.auth.SharedPreferencesGuardianInstallationIdProvider
+import com.cereveil.guardian.auth.AndroidGuardianOperationBootstrapper
 
 @Composable
 fun GuardianEnrollmentContent(childProfileId: String, childDisplayName: String, onBack: () -> Unit) {
@@ -51,6 +52,7 @@ fun GuardianEnrollmentContent(childProfileId: String, childDisplayName: String, 
           ConvexGuardianEnrollmentClient(
             application.convex,
             SharedPreferencesGuardianInstallationIdProvider(application),
+            AndroidGuardianOperationBootstrapper(application),
           ),
         )
       }

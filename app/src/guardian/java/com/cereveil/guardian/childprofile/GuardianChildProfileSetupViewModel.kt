@@ -11,6 +11,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.collect
 import com.cereveil.guardian.auth.SharedPreferencesGuardianInstallationIdProvider
+import com.cereveil.guardian.auth.AndroidGuardianOperationBootstrapper
 
 class GuardianChildProfileSetupViewModel(application: Application) : AndroidViewModel(application) {
   private val coordinator =
@@ -18,6 +19,7 @@ class GuardianChildProfileSetupViewModel(application: Application) : AndroidView
       client = ConvexGuardianChildProfileClient(
         (application as CereveilApplication).convex,
         SharedPreferencesGuardianInstallationIdProvider(application),
+        AndroidGuardianOperationBootstrapper(application),
       )
     )
 
