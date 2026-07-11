@@ -1,0 +1,3 @@
+# Separate development and production environments
+
+Cereveil will use separate development and production environments from the start. Development builds will use development Convex, Clerk, and Firebase projects, while production release builds will use separate production Convex, Clerk, and Firebase projects. Development and hackathon demonstrations may use the already-approved thin role-specific Guardian and Child APKs, but production distribution remains one Cereveil App with role selection and Role Lock. This adds configuration and release-management work, but prevents test data, test credentials, notification tokens, and experimental backend behavior from mixing with real family supervision data.

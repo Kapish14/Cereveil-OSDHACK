@@ -1,0 +1,91 @@
+/* eslint-disable */
+/**
+ * Generated `api` utility.
+ *
+ * THIS CODE IS AUTOMATICALLY GENERATED.
+ *
+ * To regenerate, run `npx convex dev`.
+ * @module
+ */
+
+import type * as http from "../http.js";
+import type * as lib_actors from "../lib/actors.js";
+import type * as lib_auth from "../lib/auth.js";
+import type * as lib_authorize from "../lib/authorize.js";
+import type * as lib_encoding from "../lib/encoding.js";
+import type * as lib_errors from "../lib/errors.js";
+import type * as lib_functionWrappers from "../lib/functionWrappers.js";
+import type * as lib_sensitive from "../lib/sensitive.js";
+import type * as lib_time from "../lib/time.js";
+import type * as modules_childProfiles_data from "../modules/childProfiles/data.js";
+import type * as modules_childProfiles_public from "../modules/childProfiles/public.js";
+import type * as modules_childProfiles_useCases from "../modules/childProfiles/useCases.js";
+import type * as modules_childProfiles_validators from "../modules/childProfiles/validators.js";
+import type * as modules_deviceIdentity_guardian from "../modules/deviceIdentity/guardian.js";
+import type * as modules_deviceIdentity_internal from "../modules/deviceIdentity/internal.js";
+import type * as modules_deviceIdentity_jwt from "../modules/deviceIdentity/jwt.js";
+import type * as modules_guardianAuth_data from "../modules/guardianAuth/data.js";
+import type * as modules_guardianAuth_public from "../modules/guardianAuth/public.js";
+import type * as modules_guardianAuth_useCases from "../modules/guardianAuth/useCases.js";
+import type * as modules_guardianAuth_validators from "../modules/guardianAuth/validators.js";
+import type * as modules_notifications_internal from "../modules/notifications/internal.js";
+import type * as modules_policies_internal from "../modules/policies/internal.js";
+
+import type {
+  ApiFromModules,
+  FilterApi,
+  FunctionReference,
+} from "convex/server";
+
+declare const fullApi: ApiFromModules<{
+  http: typeof http;
+  "lib/actors": typeof lib_actors;
+  "lib/auth": typeof lib_auth;
+  "lib/authorize": typeof lib_authorize;
+  "lib/encoding": typeof lib_encoding;
+  "lib/errors": typeof lib_errors;
+  "lib/functionWrappers": typeof lib_functionWrappers;
+  "lib/sensitive": typeof lib_sensitive;
+  "lib/time": typeof lib_time;
+  "modules/childProfiles/data": typeof modules_childProfiles_data;
+  "modules/childProfiles/public": typeof modules_childProfiles_public;
+  "modules/childProfiles/useCases": typeof modules_childProfiles_useCases;
+  "modules/childProfiles/validators": typeof modules_childProfiles_validators;
+  "modules/deviceIdentity/guardian": typeof modules_deviceIdentity_guardian;
+  "modules/deviceIdentity/internal": typeof modules_deviceIdentity_internal;
+  "modules/deviceIdentity/jwt": typeof modules_deviceIdentity_jwt;
+  "modules/guardianAuth/data": typeof modules_guardianAuth_data;
+  "modules/guardianAuth/public": typeof modules_guardianAuth_public;
+  "modules/guardianAuth/useCases": typeof modules_guardianAuth_useCases;
+  "modules/guardianAuth/validators": typeof modules_guardianAuth_validators;
+  "modules/notifications/internal": typeof modules_notifications_internal;
+  "modules/policies/internal": typeof modules_policies_internal;
+}>;
+
+/**
+ * A utility for referencing Convex functions in your app's public API.
+ *
+ * Usage:
+ * ```js
+ * const myFunctionReference = api.myModule.myFunction;
+ * ```
+ */
+export declare const api: FilterApi<
+  typeof fullApi,
+  FunctionReference<any, "public">
+>;
+
+/**
+ * A utility for referencing Convex functions in your app's internal API.
+ *
+ * Usage:
+ * ```js
+ * const myFunctionReference = internal.myModule.myFunction;
+ * ```
+ */
+export declare const internal: FilterApi<
+  typeof fullApi,
+  FunctionReference<any, "internal">
+>;
+
+export declare const components: {};

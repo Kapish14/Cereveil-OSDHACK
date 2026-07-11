@@ -1,0 +1,3 @@
+# Limit initial analytics to operational metrics
+
+Cereveil will not include product analytics, marketing analytics, session replay, ad SDKs, or screen-by-screen behavior tracking in the initial version. The product may collect privacy-safe operational metrics needed to run the service, such as crash counts, sync failure rates, policy application latency, heartbeat freshness, notification acknowledgement rates, and protection capability availability. This limits early growth and funnel visibility, but keeps the initial child-safety product's analytics surface narrow and avoids collecting avoidable Guardian or Child behavior data.

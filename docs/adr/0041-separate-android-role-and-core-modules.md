@@ -1,0 +1,3 @@
+# Separate Android role and core modules
+
+Cereveil will structure the Android codebase around explicit role and core modules rather than placing Guardian Mode and Child Mode behind conditionals in one large app module. Production will use a single app entry point, while development and hackathon builds may use thin Guardian-only and Child-only APK shells. Shared code will live in core modules for domain models, networking/auth integration, local persistence, and shared UI, while Guardian Mode, Child Mode, protection capabilities, and on-device ML live in role-specific modules. This adds module wiring up front, but preserves clean boundaries between Guardian concerns, Child enforcement, and shared infrastructure.

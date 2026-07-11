@@ -1,0 +1,3 @@
+# Require a Guardian Device on post-bootstrap Guardian requests
+
+Every post-bootstrap Guardian query and mutation will identify the calling Guardian Device using the installation identifier persisted by Guardian Mode, resolve it within the Clerk-authenticated Guardian Account, and reject unknown or revoked devices. `GuardianActor` therefore always contains the Guardian Account, Household, and Guardian Device; Guardian bootstrap remains a direct Clerk-authenticated mutation because it creates or restores that device binding. This makes Guardian Device revocation enforceable at every application boundary at the cost of including the installation identifier in every post-bootstrap Guardian request.

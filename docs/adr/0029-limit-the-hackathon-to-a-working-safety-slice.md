@@ -1,0 +1,3 @@
+# Limit the hackathon to a working safety slice
+
+The hackathon build will deliver fixed Guardian and Child APKs, QR enrollment, live location, Screen Time Summaries, one App Block with Access Request, BERT Scam Text Detection, CNN NSFW Screen Detection with blur, Guardian Safety Alerts, and a real Remote Audio demonstration using the agreed two-minute limit, visible Child notice and Stop control, three-minute cooldown, and no retained audio or session history. Production-grade Safe Browsing VPN enforcement, modular Play delivery, and uninstall resistance remain post-hackathon work so the demonstration can present a coherent, working vertical slice rather than incomplete breadth.

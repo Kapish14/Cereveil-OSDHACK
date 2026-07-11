@@ -1,0 +1,3 @@
+# Use Convex as the primary backend
+
+Cereveil will use one production Convex deployment as its primary database, application backend, realtime control plane, and host for an internal Device Identity module. Clerk remains the identity provider for Guardian Accounts, while the Convex-hosted Device Identity module enrolls Child Devices and issues short-lived custom JWTs backed by device-held keys; FCM remains the push transport and WebRTC with TURN remains the Remote Audio media transport. This accepts Convex vendor lock-in and requires application-defined authorization in every public function, but keeps transactional state, realtime coordination, retention work, and Child Device identity within one deployable backend rather than adding another service.

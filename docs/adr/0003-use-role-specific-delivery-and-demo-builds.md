@@ -1,0 +1,3 @@
+# Use role-specific delivery and demo builds
+
+Production will use one Play listing and Android package with a shared base and role-specific components delivered on demand after role selection, avoiding the download-size cost of shipping both roles to every device. Child Mode becomes irreversible only when successful QR pairing creates an Active Enrollment and Role Lock. Development and hackathon demonstrations will additionally produce two thin, separately installable APKs that launch directly into fixed Guardian and Child roles; a production-style build remains necessary to test onboarding, delivery, and role enrollment.

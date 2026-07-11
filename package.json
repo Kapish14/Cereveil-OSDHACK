@@ -1,0 +1,30 @@
+{
+  "name": "cereveil",
+  "version": "1.0.0",
+  "description": "Cereveil Android app and Convex backend.",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "convex:dev": "convex dev",
+    "convex:deploy:dev": "convex dev --once",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "android:assemble": "./gradlew :app:assembleGuardianDebug :app:assembleChildDebug",
+    "android:compile": "./gradlew :app:compileGuardianDebugKotlin :app:compileChildDebugKotlin"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "convex": "^1.42.1"
+  },
+  "devDependencies": {
+    "@edge-runtime/vm": "^5.0.0",
+    "@types/node": "^26.1.1",
+    "convex-test": "^0.0.54",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  }
+}

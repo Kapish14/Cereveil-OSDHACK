@@ -1,0 +1,14 @@
+{
+  "compilerOptions": {
+    "allowSyntheticDefaultImports": true,
+    "isolatedModules": true,
+    "lib": ["ESNext", "DOM"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "noEmit": true,
+    "strict": true,
+    "target": "ES2022",
+    "types": ["node", "vite/client", "vitest/importMeta"]
+  },
+  "include": ["convex/**/*.ts", "convex/**/*.d.ts", "tests/**/*.ts", "vitest.config.mts"]
+}

@@ -1,0 +1,3 @@
+# Use Composables UI for non-critical app UI
+
+Cereveil may use Composables UI as the starting point for shared Compose components in the core UI module, especially for Guardian Mode, onboarding, settings, summaries, policy editing, and ordinary Child Mode screens. Safety-critical Child enforcement UI, including Block Screens, Safety Warnings, Remote Audio notices, and Protection Degraded warnings, will remain simple and app-owned rather than depending heavily on the external component library. This lets the product move faster with accessible ready-made components while keeping enforcement overlays predictable, minimal, and under direct control.

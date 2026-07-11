@@ -1,0 +1,3 @@
+# Use versioned Supervision Policies
+
+Cereveil will model each Child Profile's Supervision Policy as versioned authoritative state rather than as loose remote commands. Guardian edits create a new desired policy version in Convex, Child Mode fetches and applies the latest authorized version, and the Child Device acknowledges the applied version back to Convex. The backend will distinguish the desired policy version from the applied policy version so Guardian Mode can show pending application state when a Child Device is offline or delayed. This adds policy-version and acknowledgement bookkeeping, but makes offline enforcement explicit and avoids pretending that newly saved Guardian settings are already active on the Child Device.

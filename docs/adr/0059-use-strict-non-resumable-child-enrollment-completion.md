@@ -1,0 +1,3 @@
+# Use strict non-resumable Child enrollment completion
+
+Child Device enrollment completion will be strict and non-resumable by Enrollment Code in v1: a valid code can complete enrollment once, successful completion consumes it atomically with Child Device, Active Enrollment, Child Device Credential, and desired Policy Application State creation, and later attempts with the same code fail. This accepts rare setup failures when the backend succeeds but the Child APK fails before persisting local enrollment state, because resumable or two-phase enrollment would complicate the security-sensitive bootstrap path and make copied-code recovery semantics harder to reason about.

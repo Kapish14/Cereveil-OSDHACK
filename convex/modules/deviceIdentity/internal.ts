@@ -1,0 +1,440 @@
+import { v } from "convex/values";
+import { internalMutation, internalQuery } from "../../_generated/server";
+import { MutationCtx, QueryCtx } from "../../_generated/server";
+import { Id } from "../../_generated/dataModel";
+import { internal } from "../../_generated/api";
+import { throwAppError } from "../../lib/errors";
+
+const OFFLINE_AFTER_MS = 45 * 60 * 1000;
+
+export const previewEnrollmentCode = internalQuery({
+  args: { codeHash: v.string(), serverNow: v.number() },
+  handler: async (ctx, args) => {
+    const enrollmentCode = await ctx.db
+      .query("enrollmentCodes")
+      .withIndex("by_code_hash", (q) => q.eq("codeHash", args.codeHash))
+      .unique();
+    if (
+      enrollmentCode === null ||
+      enrollmentCode.status !== "active" ||
+      enrollmentCode.expiresAt <= args.serverNow
+    ) {
+      return null;
+    }
+
+    const childProfile = await ctx.db.get("childProfiles", enrollmentCode.childProfileId);
+    if (childProfile === null || childProfile.status !== "active") return null;
+
+    const enrollment = await ctx.db
+      .query("activeEnrollments")
+      .withIndex("by_child_profile_id_and_status", (q) =>
+        q.eq("childProfileId", childProfile._id).eq("status", "active"),
+      )
+      .unique();
+    if (enrollment !== null) return null;
+
+    return {
+      childDisplayName: childProfile.displayName,
+      codeExpiresAt: enrollmentCode.expiresAt,
+      serverNow: args.serverNow,
+    };
+  },
+});
+
+export const completeEnrollment = internalMutation({
+  args: {
+    codeHash: v.string(),
+    publicKeySpki: v.string(),
+    installationId: v.string(),
+    deviceLabel: v.optional(v.string()),
+    appBuild: v.string(),
+    serverNow: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const enrollmentCode = await ctx.db
+      .query("enrollmentCodes")
+      .withIndex("by_code_hash", (q) => q.eq("codeHash", args.codeHash))
+      .unique();
+    if (
+      enrollmentCode === null ||
+      enrollmentCode.status !== "active" ||
+      enrollmentCode.expiresAt <= args.serverNow
+    ) {
+      return { kind: "invalid_code" as const };
+    }
+
+    const childProfile = await ctx.db.get("childProfiles", enrollmentCode.childProfileId);
+    const household = await ctx.db.get("households", enrollmentCode.householdId);
+    if (
+      childProfile === null ||
+      childProfile.status !== "active" ||
+      household === null ||
+      household.status !== "active"
+    ) {
+      return { kind: "invalid_code" as const };
+    }
+
+    const existingEnrollment = await ctx.db
+      .query("activeEnrollments")
+      .withIndex("by_child_profile_id_and_status", (q) =>
+        q.eq("childProfileId", childProfile._id).eq("status", "active"),
+      )
+      .unique();
+    if (existingEnrollment !== null) return { kind: "already_enrolled" as const };
+
+    const policies = await ctx.db
+      .query("supervisionPolicies")
+      .withIndex("by_child_profile_id_and_version", (q) =>
+        q.eq("childProfileId", childProfile._id),
+      )
+      .order("desc")
+      .take(1);
+    const currentPolicy = policies.at(0);
+    if (currentPolicy === undefined || currentPolicy.status !== "active") {
+      throw new Error("Active Child Profile is missing its current Supervision Policy.");
+    }
+
+    const childDeviceId = await ctx.db.insert("childDevices", {
+      householdId: household._id,
+      childProfileId: childProfile._id,
+      installationId: args.installationId,
+      ...(args.deviceLabel === undefined ? {} : { deviceLabel: args.deviceLabel }),
+      platform: "android",
+      appBuild: args.appBuild,
+      environment: "dev",
+      status: "active",
+      createdAt: args.serverNow,
+      updatedAt: args.serverNow,
+    });
+    const activeEnrollmentId = await ctx.db.insert("activeEnrollments", {
+      householdId: household._id,
+      childProfileId: childProfile._id,
+      childDeviceId,
+      enrollmentCodeId: enrollmentCode._id,
+      status: "active",
+      roleLockActive: true,
+      enrolledAt: args.serverNow,
+      createdAt: args.serverNow,
+      updatedAt: args.serverNow,
+    });
+    const credentialId = await ctx.db.insert("childDeviceCredentials", {
+      activeEnrollmentId,
+      childDeviceId,
+      publicKeySpki: args.publicKeySpki,
+      algorithm: "ES256",
+      status: "active",
+      createdAt: args.serverNow,
+      updatedAt: args.serverNow,
+    });
+    await ctx.db.insert("policyApplicationStates", {
+      householdId: household._id,
+      childProfileId: childProfile._id,
+      activeEnrollmentId,
+      childDeviceId,
+      desiredPolicyVersion: currentPolicy.version,
+      status: "pending",
+      createdAt: args.serverNow,
+      updatedAt: args.serverNow,
+    });
+    await ctx.db.insert("supervisionHealth", {
+      householdId: household._id,
+      childProfileId: childProfile._id,
+      activeEnrollmentId,
+      childDeviceId,
+      connectivityStatus: "pending",
+      protectionStatus: "pending",
+      createdAt: args.serverNow,
+      updatedAt: args.serverNow,
+    });
+    await ctx.scheduler.runAt(
+      args.serverNow + OFFLINE_AFTER_MS,
+      internal.modules.deviceIdentity.internal.markOfflineIfStale,
+      { activeEnrollmentId, expectedLastHeartbeatAt: null, serverNow: args.serverNow + OFFLINE_AFTER_MS },
+    );
+    await ctx.db.patch("enrollmentCodes", enrollmentCode._id, {
+      status: "consumed",
+      consumedAt: args.serverNow,
+      consumedByActiveEnrollmentId: activeEnrollmentId,
+    });
+
+    return {
+      kind: "success" as const,
+      childDeviceId,
+      activeEnrollmentId,
+      credentialId,
+      childDisplayName: childProfile.displayName,
+      desiredPolicyVersion: currentPolicy.version,
+      enrolledAt: args.serverNow,
+      environment: "dev" as const,
+    };
+  },
+});
+
+export const childActorArgs = {
+  credentialId: v.id("childDeviceCredentials"),
+  activeEnrollmentId: v.id("activeEnrollments"),
+  childDeviceId: v.id("childDevices"),
+};
+
+export const childDeviceActorValidator = v.object({
+  credentialId: v.id("childDeviceCredentials"),
+  activeEnrollmentId: v.id("activeEnrollments"),
+  childDeviceId: v.id("childDevices"),
+  childProfileId: v.id("childProfiles"),
+  householdId: v.id("households"),
+});
+
+export type ChildDeviceActor = {
+  credentialId: Id<"childDeviceCredentials">;
+  activeEnrollmentId: Id<"activeEnrollments">;
+  childDeviceId: Id<"childDevices">;
+  childProfileId: Id<"childProfiles">;
+  householdId: Id<"households">;
+};
+
+export const resolveChildDeviceActor = internalQuery({
+  args: { credentialId: v.string(), activeEnrollmentId: v.string(), childDeviceId: v.string() },
+  handler: async (ctx, args) => {
+    const credentialId = ctx.db.normalizeId("childDeviceCredentials", args.credentialId);
+    const activeEnrollmentId = ctx.db.normalizeId("activeEnrollments", args.activeEnrollmentId);
+    const childDeviceId = ctx.db.normalizeId("childDevices", args.childDeviceId);
+    if (credentialId === null || activeEnrollmentId === null || childDeviceId === null) return null;
+    const loaded = await loadActiveChildActor(ctx, { credentialId, activeEnrollmentId, childDeviceId });
+    if (loaded === null) return null;
+    return actorFromLoaded(loaded);
+  },
+});
+
+const capabilitiesValidator = v.object({
+  accessibilityService: v.boolean(),
+  usageAccess: v.boolean(),
+  location: v.boolean(),
+  microphone: v.boolean(),
+  notificationAccess: v.boolean(),
+  batteryOptimizationExempt: v.boolean(),
+});
+
+export const recordHeartbeat = internalMutation({
+  args: {
+    actor: childDeviceActorValidator,
+    input: v.object({ capabilities: capabilitiesValidator, serverNow: v.number() }),
+  },
+  handler: async (ctx, args) => {
+    const actor = await requireActiveChildDeviceActor(ctx, args.actor);
+    const health = await ctx.db
+      .query("supervisionHealth")
+      .withIndex("by_active_enrollment_id", (q) =>
+        q.eq("activeEnrollmentId", actor.enrollment._id),
+      )
+      .unique();
+    if (health === null) throwAppError("INTERNAL_ERROR");
+    const fullyProtected = Object.values(args.input.capabilities).every(Boolean);
+    const status = fullyProtected ? ("fully_protected" as const) : ("protection_degraded" as const);
+    await ctx.db.patch("supervisionHealth", health._id, {
+      connectivityStatus: "online",
+      protectionStatus: status,
+      capabilities: args.input.capabilities,
+      lastHeartbeatAt: args.input.serverNow,
+      updatedAt: args.input.serverNow,
+    });
+    await ctx.scheduler.runAt(
+      args.input.serverNow + OFFLINE_AFTER_MS,
+      internal.modules.deviceIdentity.internal.markOfflineIfStale,
+      {
+        activeEnrollmentId: actor.enrollment._id,
+        expectedLastHeartbeatAt: args.input.serverNow,
+        serverNow: args.input.serverNow + OFFLINE_AFTER_MS,
+      },
+    );
+    return { status, serverNow: args.input.serverNow };
+  },
+});
+
+export const markOfflineIfStale = internalMutation({
+  args: {
+    activeEnrollmentId: v.id("activeEnrollments"),
+    expectedLastHeartbeatAt: v.union(v.number(), v.null()),
+    serverNow: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const health = await ctx.db
+      .query("supervisionHealth")
+      .withIndex("by_active_enrollment_id", (q) => q.eq("activeEnrollmentId", args.activeEnrollmentId))
+      .unique();
+    if (health === null) return false;
+    if ((health.lastHeartbeatAt ?? null) !== args.expectedLastHeartbeatAt) return false;
+    await ctx.db.patch("supervisionHealth", health._id, {
+      connectivityStatus: "offline",
+      updatedAt: args.serverNow,
+    });
+    return true;
+  },
+});
+
+export const createTokenChallenge = internalMutation({
+  args: {
+    credentialId: v.id("childDeviceCredentials"),
+    challengeHash: v.string(),
+    expiresAt: v.number(),
+    serverNow: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const activeCredential = await loadActiveCredential(ctx, args.credentialId);
+    if (activeCredential === null) return null;
+    await ctx.db.insert("childDeviceTokenChallenges", {
+      credentialId: args.credentialId,
+      challengeHash: args.challengeHash,
+      status: "active",
+      expiresAt: args.expiresAt,
+      createdAt: args.serverNow,
+    });
+    return true;
+  },
+});
+
+export const getTokenChallenge = internalQuery({
+  args: {
+    credentialId: v.id("childDeviceCredentials"),
+    challengeHash: v.string(),
+    serverNow: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const challenge = await loadActiveChallenge(ctx, args);
+    if (challenge === null) return null;
+    const activeCredential = await loadActiveCredential(ctx, args.credentialId);
+    return activeCredential === null
+      ? null
+      : { publicKeySpki: activeCredential.credential.publicKeySpki };
+  },
+});
+
+export const consumeTokenChallenge = internalMutation({
+  args: {
+    credentialId: v.id("childDeviceCredentials"),
+    challengeHash: v.string(),
+    serverNow: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const challenge = await loadActiveChallenge(ctx, args);
+    if (challenge === null) return null;
+    const activeCredential = await loadActiveCredential(ctx, args.credentialId);
+    if (activeCredential === null) return null;
+    await ctx.db.patch("childDeviceTokenChallenges", challenge._id, {
+      status: "used",
+      usedAt: args.serverNow,
+    });
+    return {
+      credentialId: activeCredential.credential._id,
+      activeEnrollmentId: activeCredential.enrollment._id,
+      childDeviceId: activeCredential.device._id,
+    };
+  },
+});
+
+export type ChildActorIds = {
+  credentialId: Id<"childDeviceCredentials">;
+  activeEnrollmentId: Id<"activeEnrollments">;
+  childDeviceId: Id<"childDevices">;
+};
+
+export async function loadActiveChildActor(ctx: MutationCtx | QueryCtx, ids: ChildActorIds) {
+  const [credential, enrollment, device] = await Promise.all([
+    ctx.db.get("childDeviceCredentials", ids.credentialId),
+    ctx.db.get("activeEnrollments", ids.activeEnrollmentId),
+    ctx.db.get("childDevices", ids.childDeviceId),
+  ]);
+  if (
+    credential === null ||
+    credential.status !== "active" ||
+    credential.activeEnrollmentId !== ids.activeEnrollmentId ||
+    credential.childDeviceId !== ids.childDeviceId ||
+    enrollment === null ||
+    enrollment.status !== "active" ||
+    enrollment.childDeviceId !== ids.childDeviceId ||
+    device === null ||
+    device.status !== "active"
+  ) {
+    return null;
+  }
+  const [childProfile, household] = await Promise.all([
+    ctx.db.get("childProfiles", enrollment.childProfileId),
+    ctx.db.get("households", enrollment.householdId),
+  ]);
+  if (
+    childProfile === null ||
+    childProfile.status !== "active" ||
+    childProfile.householdId !== enrollment.householdId ||
+    device.childProfileId !== childProfile._id ||
+    device.householdId !== enrollment.householdId ||
+    household === null ||
+    household.status !== "active"
+  ) return null;
+  return { credential, enrollment, device, childProfile, household };
+}
+
+export async function requireActiveChildDeviceActor(
+  ctx: MutationCtx | QueryCtx,
+  actor: ChildDeviceActor,
+) {
+  const loaded = await loadActiveChildActor(ctx, actor);
+  if (loaded === null) throwAppError("CHILD_DEVICE_UNAUTHORIZED");
+  const resolved = actorFromLoaded(loaded);
+  if (resolved.childProfileId !== actor.childProfileId || resolved.householdId !== actor.householdId) {
+    throwAppError("CHILD_DEVICE_UNAUTHORIZED");
+  }
+  return loaded;
+}
+
+function actorFromLoaded(loaded: NonNullable<Awaited<ReturnType<typeof loadActiveChildActor>>>): ChildDeviceActor {
+  return {
+    credentialId: loaded.credential._id,
+    activeEnrollmentId: loaded.enrollment._id,
+    childDeviceId: loaded.device._id,
+    childProfileId: loaded.childProfile._id,
+    householdId: loaded.household._id,
+  };
+}
+
+async function loadActiveCredential(
+  ctx: MutationCtx | QueryCtx,
+  credentialId: Id<"childDeviceCredentials">,
+) {
+  const credential = await ctx.db.get("childDeviceCredentials", credentialId);
+  if (credential === null || credential.status !== "active") return null;
+  const [enrollment, device] = await Promise.all([
+    ctx.db.get("activeEnrollments", credential.activeEnrollmentId),
+    ctx.db.get("childDevices", credential.childDeviceId),
+  ]);
+  if (
+    enrollment === null ||
+    enrollment.status !== "active" ||
+    device === null ||
+    device.status !== "active"
+  ) {
+    return null;
+  }
+  return { credential, enrollment, device };
+}
+
+async function loadActiveChallenge(
+  ctx: MutationCtx | QueryCtx,
+  args: {
+    credentialId: Id<"childDeviceCredentials">;
+    challengeHash: string;
+    serverNow: number;
+  },
+) {
+  const challenge = await ctx.db
+    .query("childDeviceTokenChallenges")
+    .withIndex("by_challenge_hash", (q) => q.eq("challengeHash", args.challengeHash))
+    .unique();
+  if (
+    challenge === null ||
+    challenge.credentialId !== args.credentialId ||
+    challenge.status !== "active" ||
+    challenge.expiresAt <= args.serverNow
+  ) {
+    return null;
+  }
+  return challenge;
+}

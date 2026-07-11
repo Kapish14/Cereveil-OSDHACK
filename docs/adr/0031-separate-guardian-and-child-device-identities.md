@@ -1,0 +1,3 @@
+# Separate Guardian Account and Child Device identities
+
+Clerk will authenticate Guardian Accounts, with each Guardian Device represented by an independently revocable Clerk session. Child Devices will not be modeled as Clerk users: successful enrollment will instead issue a renewable, independently revocable Child Device Credential bound to the Active Enrollment and protected by a device-held key. This preserves the domain distinction between a human Guardian Account and a non-login Child Profile, permits least-privilege authorization and device replacement, and avoids treating FCM delivery tokens or long-lived bearer secrets as device identity.

@@ -1,0 +1,3 @@
+# Make remote audio disclosed and child-stoppable
+
+A Remote Audio Session starts automatically when requested by a Guardian, without per-session acceptance, but must immediately show the Child a persistent notification and a Stop control that remains available throughout the session. Each session automatically ends after at most two minutes and is followed by a three-minute cooldown before another may begin. This preserves the Guardian's emergency check-in use case while making active microphone access visible, bounded, and terminable by the Child; delivery remains best-effort because consumer Android background restrictions may prevent or delay capture.

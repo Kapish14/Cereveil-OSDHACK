@@ -1,0 +1,3 @@
+# Make Screen Time Summaries policy-controlled
+
+Cereveil will make Screen Time Summaries an explicit Supervision Policy feature. When enabled, Child Mode uploads one daily aggregate per local day after midnight or at the next reliable sync, and the backend retains summaries for up to 30 days. When disabled, Child Mode stops collecting and uploading Screen Time Summaries, clears unsent local screen-time summary queues, and Convex immediately deletes existing backend Screen Time Summaries for that Child Profile rather than waiting for normal expiry. This gives Guardians a clear privacy control while preserving daily summaries only when the feature is intentionally enabled.

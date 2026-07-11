@@ -1,0 +1,3 @@
+# Apply policy updates through desired and applied versions
+
+Cereveil will process Guardian policy edits by inserting a new Supervision Policy version, updating the desired policy version, creating a Child Device command to fetch policy, and sending FCM only as a wake-up signal. Child Mode applies the fetched policy locally, persists it as the last accepted policy for offline enforcement, and acknowledges the applied version back to Convex. Guardian Mode treats a saved policy as desired until Child Mode acknowledges it as applied. This prevents the UI and backend from claiming that a policy is active on the Child Device before the device has actually received and applied it.

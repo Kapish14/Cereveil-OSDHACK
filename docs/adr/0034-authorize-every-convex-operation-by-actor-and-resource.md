@@ -1,0 +1,3 @@
+# Authorize every Convex operation by actor and resource
+
+Every public Convex function in Cereveil will resolve the caller into exactly one authenticated actor before doing application work: a Clerk-authenticated GuardianActor or a custom-JWT-authenticated ChildDeviceActor. Authorization will then check both the actor type and the specific resource being accessed, such as the GuardianActor's Household ownership or the ChildDeviceActor's Active Enrollment. Client-provided IDs such as household, child profile, enrollment, or device IDs are never trusted without backend ownership and revocation checks. This adds repeated authorization structure to every API boundary, but prevents valid credentials from being used across the wrong Household, Child Profile, or Child Device.

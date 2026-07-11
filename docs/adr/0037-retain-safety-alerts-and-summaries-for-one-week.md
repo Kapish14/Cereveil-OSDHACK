@@ -1,0 +1,3 @@
+# Retain Safety Alerts and summaries for one week
+
+Cereveil will retain individual metadata-only Safety Alerts for one week, then delete them after creating a weekly Safety Incident Summary for the Guardian. The weekly summary will itself be retained only until the next weekly summary is created, after which the previous summary is deleted. This prevents Cereveil from accumulating a long-term safety or behavioral history about a Child while still giving Guardians a short recap of recent safety patterns. The trade-off is that Guardians cannot review older individual alerts or compare long-range safety trends inside the product.
