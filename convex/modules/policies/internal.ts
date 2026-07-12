@@ -51,6 +51,21 @@ export const acknowledgePolicy = internalMutation({
       status: "applied",
       updatedAt: args.input.serverNow,
     });
+    const commands = await ctx.db
+      .query("childDeviceCommands")
+      .withIndex("by_active_enrollment_id_and_status", (q) =>
+        q.eq("activeEnrollmentId", actor.enrollment._id).eq("status", "pending"),
+      )
+      .take(50);
+    for (const command of commands) {
+      if (command.type === "apply_policy_version" && command.policyVersion === args.input.appliedPolicyVersion) {
+        await ctx.db.patch("childDeviceCommands", command._id, {
+          status: "acknowledged",
+          acknowledgedAt: args.input.serverNow,
+          updatedAt: args.input.serverNow,
+        });
+      }
+    }
     return true;
   },
 });

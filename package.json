@@ -18,7 +18,8 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "convex": "^1.42.1"
+    "convex": "^1.42.1",
+    "google-auth-library": "^10.9.0"
   },
   "devDependencies": {
     "@edge-runtime/vm": "^5.0.0",

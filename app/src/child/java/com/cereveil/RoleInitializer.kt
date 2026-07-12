@@ -1,6 +1,7 @@
 package com.cereveil
 
 import android.app.Application
+import android.util.Log
 import com.cereveil.child.enrollment.ChildPushTokenRegistrar
 import com.google.firebase.FirebaseApp
 import com.google.firebase.FirebaseOptions
@@ -33,9 +34,12 @@ object RoleInitializer {
       )
     }
     FirebaseMessaging.getInstance().token.addOnSuccessListener { token ->
+      Log.i("CereveilFCM", "Child FCM token acquired; registering delivery state")
       CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
         ChildPushTokenRegistrar(application).register(token)
       }
+    }.addOnFailureListener { error ->
+      Log.e("CereveilFCM", "Child FCM token acquisition failed: ${error.javaClass.simpleName}: ${error.message}")
     }
   }
 

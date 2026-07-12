@@ -1,0 +1,3 @@
+# Acknowledge messaging work per target
+
+Cereveil will reconcile each Guardian Notice through a separate receipt for every active Guardian Device, and each Child Device Command through its own independent lifecycle. Guardian receipt processing proves that authoritative notice state was committed to that device's local cache, while command acknowledgement proves the command's type-specific success point; neither FCM acceptance nor fetching alone counts as acknowledgement. This uses more rows than shared cursors, but prevents one device or one stuck command from blocking unrelated messaging work and preserves accurate multi-device reconciliation.

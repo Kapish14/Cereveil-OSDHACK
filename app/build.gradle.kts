@@ -43,6 +43,10 @@ android {
             resValue("string", "app_name", "Cereveil Guardian")
             buildConfigString("CEREVEIL_ROLE", "guardian")
             buildConfigString("CLERK_PUBLISHABLE_KEY", envValue("CLERK_PUBLISHABLE_KEY"))
+            buildConfigString("FIREBASE_APPLICATION_ID", envValue("FIREBASE_GUARDIAN_APPLICATION_ID"))
+            buildConfigString("FIREBASE_API_KEY", envValue("FIREBASE_API_KEY"))
+            buildConfigString("FIREBASE_PROJECT_ID", envValue("FIREBASE_PROJECT_ID"))
+            buildConfigString("FIREBASE_GCM_SENDER_ID", envValue("FIREBASE_GCM_SENDER_ID"))
         }
         create("child") {
             dimension = "role"
@@ -51,7 +55,7 @@ android {
             resValue("string", "app_name", "Cereveil Child")
             buildConfigString("CEREVEIL_ROLE", "child")
             buildConfigString("CLERK_PUBLISHABLE_KEY", "")
-            buildConfigString("FIREBASE_APPLICATION_ID", envValue("FIREBASE_APPLICATION_ID"))
+            buildConfigString("FIREBASE_APPLICATION_ID", envValue("FIREBASE_CHILD_APPLICATION_ID"))
             buildConfigString("FIREBASE_API_KEY", envValue("FIREBASE_API_KEY"))
             buildConfigString("FIREBASE_PROJECT_ID", envValue("FIREBASE_PROJECT_ID"))
             buildConfigString("FIREBASE_GCM_SENDER_ID", envValue("FIREBASE_GCM_SENDER_ID"))
@@ -136,6 +140,8 @@ dependencies {
   add("guardianImplementation", libs.clerk.android.api)
   add("guardianImplementation", libs.clerk.android.ui)
   add("guardianImplementation", libs.zxing.core)
+  add("guardianImplementation", platform(libs.firebase.bom))
+  add("guardianImplementation", libs.firebase.messaging)
   add("childImplementation", libs.google.code.scanner)
   add("childImplementation", platform(libs.firebase.bom))
   add("childImplementation", libs.firebase.messaging)

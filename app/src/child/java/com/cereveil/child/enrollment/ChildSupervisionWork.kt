@@ -36,6 +36,7 @@ class ChildSupervisionWorker(context: Context, parameters: WorkerParameters) :
       store = store,
       capabilities = AndroidProtectionCapabilities(applicationContext)::current,
       refreshToken = { ChildDeviceTokenProvider(client, AndroidChildDeviceKeyStore(), store).refresh() },
+      runtime = AndroidPolicyControlledRuntime(applicationContext),
     ).sync()
     return when (outcome) {
       ChildSupervisionSyncOutcome.Complete -> Result.success()
@@ -55,6 +56,7 @@ class ChildSupervisionSyncCoordinator(
   private val store: ChildEnrollmentStateStore,
   private val capabilities: () -> ChildCapabilities,
   private val refreshToken: suspend () -> ChildEnrollmentResult<String>,
+  private val runtime: PolicyControlledRuntime = PolicyControlledRuntime { },
   private val now: () -> Long = System::currentTimeMillis,
 ) {
   suspend fun sync(): ChildSupervisionSyncOutcome {
@@ -64,8 +66,60 @@ class ChildSupervisionSyncCoordinator(
       is ChildEnrollmentResult.Failure -> return outcomeFor(result.error)
     }
     var retry = false
+    var acknowledgedPolicyVersion = state.acknowledgedPolicyVersion
+    when (val commands = client.reconcileCommands(token)) {
+      is ChildEnrollmentResult.Success -> {
+        for (command in commands.value) {
+          if (command.type != "apply_policy_version") {
+            when (val rejected = client.rejectCommand(token, command.commandId, "unsupported_command")) {
+              is ChildEnrollmentResult.Success -> Unit
+              is ChildEnrollmentResult.Failure -> {
+                if (rejected.error == ChildEnrollmentError.Unauthorized) return ChildSupervisionSyncOutcome.Stop
+                retry = true
+              }
+            }
+            continue
+          }
+          var applied = store.loadPolicy()
+          if (applied?.version != command.policyVersion) {
+            when (val fetched = client.fetchPolicy(token)) {
+              is ChildEnrollmentResult.Success -> {
+                if (fetched.value.version != command.policyVersion) {
+                  retry = true
+                  continue
+                }
+                store.savePolicy(fetched.value)
+                runtime.start(fetched.value)
+                applied = fetched.value
+              }
+              is ChildEnrollmentResult.Failure -> {
+                if (fetched.error == ChildEnrollmentError.Unauthorized) return ChildSupervisionSyncOutcome.Stop
+                retry = true
+                continue
+              }
+            }
+          }
+          if (applied != null && acknowledgedPolicyVersion != applied.version) {
+            when (val acknowledged = client.acknowledgePolicy(token, applied.version)) {
+              is ChildEnrollmentResult.Success -> {
+                store.markPolicyAcknowledged(applied.version)
+                acknowledgedPolicyVersion = applied.version
+              }
+              is ChildEnrollmentResult.Failure -> {
+                if (acknowledged.error == ChildEnrollmentError.Unauthorized) return ChildSupervisionSyncOutcome.Stop
+                retry = true
+              }
+            }
+          }
+        }
+      }
+      is ChildEnrollmentResult.Failure -> {
+        if (commands.error == ChildEnrollmentError.Unauthorized) return ChildSupervisionSyncOutcome.Stop
+        retry = true
+      }
+    }
     val policy = store.loadPolicy()
-    if (policy != null && state.acknowledgedPolicyVersion != policy.version) {
+    if (policy != null && acknowledgedPolicyVersion != policy.version) {
       when (val result = client.acknowledgePolicy(token, policy.version)) {
         is ChildEnrollmentResult.Success -> store.markPolicyAcknowledged(policy.version)
         is ChildEnrollmentResult.Failure -> if (result.error == ChildEnrollmentError.Unauthorized) return ChildSupervisionSyncOutcome.Stop else retry = true

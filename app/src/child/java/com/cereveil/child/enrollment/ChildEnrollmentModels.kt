@@ -56,6 +56,13 @@ data class ChildSupervisionPolicy(
   val rawJson: String,
 )
 
+data class ChildDeviceCommand(
+  val commandId: String,
+  val type: String,
+  val policyVersion: Int,
+  val expiresAt: Long,
+)
+
 data class ChildCapabilities(
   val accessibilityService: Boolean,
   val usageAccess: Boolean,
@@ -109,6 +116,8 @@ interface ChildDeviceIdentityClient {
   suspend fun acknowledgePolicy(accessJwt: String, version: Int): ChildEnrollmentResult<Unit>
   suspend fun heartbeat(accessJwt: String, capabilities: ChildCapabilities): ChildEnrollmentResult<Unit>
   suspend fun registerPushToken(accessJwt: String, token: String): ChildEnrollmentResult<Unit>
+  suspend fun reconcileCommands(accessJwt: String): ChildEnrollmentResult<List<ChildDeviceCommand>>
+  suspend fun rejectCommand(accessJwt: String, commandId: String, reason: String): ChildEnrollmentResult<Unit>
   suspend fun createTokenChallenge(credentialId: String): ChildEnrollmentResult<String>
   suspend fun exchangeTokenChallenge(
     credentialId: String,

@@ -6,9 +6,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.put
 
 class HttpChildDeviceIdentityClient(convexSiteUrl: String) : ChildDeviceIdentityClient {
@@ -70,6 +72,40 @@ class HttpChildDeviceIdentityClient(convexSiteUrl: String) : ChildDeviceIdentity
 
   override suspend fun registerPushToken(accessJwt: String, token: String) =
     request("/child/push-token", accessJwt, buildJsonObject { put("token", token) }).unit()
+
+  override suspend fun reconcileCommands(accessJwt: String): ChildEnrollmentResult<List<ChildDeviceCommand>> {
+    val commands = mutableListOf<ChildDeviceCommand>()
+    var cursor: String? = null
+    var done: Boolean
+    do {
+      val result = request("/child/commands", accessJwt, buildJsonObject {
+        if (cursor == null) put("cursor", JsonNull) else put("cursor", cursor!!)
+      })
+      when (result) {
+        is ChildEnrollmentResult.Failure -> return result
+        is ChildEnrollmentResult.Success -> {
+          commands += result.value["commands"]!!.jsonArray.map { element ->
+            val command = element.jsonObject
+            ChildDeviceCommand(
+              commandId = command.string("commandId"),
+              type = command.string("type"),
+              policyVersion = command.int("policyVersion"),
+              expiresAt = command.long("expiresAt"),
+            )
+          }
+          cursor = result.value.string("continueCursor")
+          done = result.value["isDone"]?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: true
+        }
+      }
+    } while (!done)
+    return ChildEnrollmentResult.Success(commands)
+  }
+
+  override suspend fun rejectCommand(accessJwt: String, commandId: String, reason: String) =
+    request("/child/commands/reject", accessJwt, buildJsonObject {
+      put("commandId", commandId)
+      put("reason", reason)
+    }).unit()
 
   override suspend fun createTokenChallenge(credentialId: String) =
     request("/device-identity/token/challenge", body = buildJsonObject { put("credentialId", credentialId) })

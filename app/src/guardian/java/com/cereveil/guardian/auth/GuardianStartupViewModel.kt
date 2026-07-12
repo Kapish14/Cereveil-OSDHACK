@@ -6,6 +6,8 @@ import androidx.lifecycle.viewModelScope
 import com.cereveil.BuildConfig
 import com.cereveil.CereveilApplication
 import com.cereveil.RoleInitializer
+import com.cereveil.guardian.messaging.GuardianPushTokenRegistrar
+import com.cereveil.guardian.messaging.GuardianNoticeReconciler
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -55,6 +57,10 @@ class GuardianStartupViewModel(application: Application) : AndroidViewModel(appl
   private suspend fun runStart() {
     mutableRoute.value = GuardianStartupRoute.Loading
     val route = coordinator.start()
+    if (route == GuardianStartupRoute.Setup || route == GuardianStartupRoute.Dashboard) {
+      GuardianPushTokenRegistrar(getApplication()).registerPending()
+      GuardianNoticeReconciler(getApplication()).reconcile()
+    }
     val authState = authSessionProvider.currentState()
     mutableSetupAuthSessionKey.value =
       if (

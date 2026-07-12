@@ -2,9 +2,12 @@ import { base64UrlEncode } from "./encoding";
 import { env } from "../_generated/server";
 
 export async function encryptPushToken(token: string) {
-  const secret = env.CHILD_PUSH_TOKEN_ENCRYPTION_SECRET;
+  const version = env.FCM_TOKEN_ENCRYPTION_ACTIVE_VERSION ?? "legacy";
+  const secret = version === "1"
+    ? (env.FCM_TOKEN_ENCRYPTION_KEY_V1 ?? "")
+    : env.CHILD_PUSH_TOKEN_ENCRYPTION_SECRET;
   if (secret.length < 32) {
-    throw new Error("CHILD_PUSH_TOKEN_ENCRYPTION_SECRET must contain at least 32 characters.");
+    throw new Error("The active FCM token encryption key must contain at least 32 characters.");
   }
   const keyBytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(secret));
   const key = await crypto.subtle.importKey("raw", keyBytes, "AES-GCM", false, ["encrypt"]);
@@ -14,5 +17,5 @@ export async function encryptPushToken(token: string) {
     key,
     new TextEncoder().encode(token),
   );
-  return `${base64UrlEncode(nonce)}.${base64UrlEncode(new Uint8Array(encrypted))}`;
+  return `${version}.${base64UrlEncode(nonce)}.${base64UrlEncode(new Uint8Array(encrypted))}`;
 }

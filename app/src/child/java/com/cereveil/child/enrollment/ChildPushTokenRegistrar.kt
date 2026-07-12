@@ -3,6 +3,7 @@ package com.cereveil.child.enrollment
 import android.content.Context
 import com.cereveil.BuildConfig
 import com.google.firebase.messaging.FirebaseMessagingService
+import com.google.firebase.messaging.RemoteMessage
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -42,6 +43,23 @@ class ChildFirebaseMessagingService : FirebaseMessagingService() {
   override fun onNewToken(token: String) {
     ChildPushTokenRegistrar(this).also { registrar ->
       scope.launch { registrar.register(token) }
+    }
+  }
+
+  override fun onMessageReceived(message: RemoteMessage) {
+    if (message.data["category"] != "child_command") return
+    scope.launch {
+      val store = SharedPreferencesChildEnrollmentStateStore(this@ChildFirebaseMessagingService)
+      val client = HttpChildDeviceIdentityClient(BuildConfig.CONVEX_SITE_URL)
+      ChildSupervisionSyncCoordinator(
+        client = client,
+        store = store,
+        capabilities = AndroidProtectionCapabilities(this@ChildFirebaseMessagingService)::current,
+        refreshToken = {
+          ChildDeviceTokenProvider(client, AndroidChildDeviceKeyStore(), store).refresh()
+        },
+        runtime = AndroidPolicyControlledRuntime(this@ChildFirebaseMessagingService),
+      ).sync()
     }
   }
 }

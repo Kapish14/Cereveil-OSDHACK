@@ -28,6 +28,11 @@ type Env = {
   readonly CHILD_DEVICE_JWT_SECRET: string;
   readonly CHILD_PUSH_TOKEN_ENCRYPTION_SECRET: string;
   readonly CLERK_JWT_ISSUER_DOMAIN: string;
+  readonly FCM_CLIENT_EMAIL: string | undefined;
+  readonly FCM_PRIVATE_KEY: string | undefined;
+  readonly FCM_PROJECT_ID: string | undefined;
+  readonly FCM_TOKEN_ENCRYPTION_ACTIVE_VERSION: string | undefined;
+  readonly FCM_TOKEN_ENCRYPTION_KEY_V1: string | undefined;
 };
 
 /**

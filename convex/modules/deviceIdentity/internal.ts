@@ -6,6 +6,7 @@ import { internal } from "../../_generated/api";
 import { throwAppError } from "../../lib/errors";
 
 const OFFLINE_AFTER_MS = 45 * 60 * 1000;
+const MESSAGE_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 
 export const previewEnrollmentCode = internalQuery({
   args: { codeHash: v.string(), serverNow: v.number() },
@@ -136,6 +137,25 @@ export const completeEnrollment = internalMutation({
       createdAt: args.serverNow,
       updatedAt: args.serverNow,
     });
+    await ctx.db.insert("childDeviceCommands", {
+      householdId: household._id,
+      childProfileId: childProfile._id,
+      activeEnrollmentId,
+      childDeviceId,
+      type: "apply_policy_version",
+      policyVersion: currentPolicy.version,
+      intentKey: "apply_policy_version",
+      status: "pending",
+      createdAt: args.serverNow,
+      updatedAt: args.serverNow,
+      expiresAt: args.serverNow + MESSAGE_RETENTION_MS,
+    }).then(async (commandId) => {
+      await ctx.scheduler.runAfter(0, internal.fcmDelivery.deliver, {
+        recordKind: "childDeviceCommand",
+        recordId: commandId,
+        attempt: 1,
+      });
+    });
     await ctx.db.insert("supervisionHealth", {
       householdId: household._id,
       childProfileId: childProfile._id,
@@ -228,6 +248,8 @@ export const recordHeartbeat = internalMutation({
       )
       .unique();
     if (health === null) throwAppError("INTERNAL_ERROR");
+    const wasOffline = health.connectivityStatus === "offline";
+    const previousCapabilities = health.capabilities;
     const fullyProtected = Object.values(args.input.capabilities).every(Boolean);
     const status = fullyProtected ? ("fully_protected" as const) : ("protection_degraded" as const);
     await ctx.db.patch("supervisionHealth", health._id, {
@@ -236,7 +258,32 @@ export const recordHeartbeat = internalMutation({
       capabilities: args.input.capabilities,
       lastHeartbeatAt: args.input.serverNow,
       updatedAt: args.input.serverNow,
+      ...(wasOffline ? { activeOfflineEpisodeKey: undefined } : {}),
     });
+    if (wasOffline && health.activeOfflineEpisodeKey !== undefined) {
+      await createGuardianNotice(ctx, {
+        householdId: actor.enrollment.householdId,
+        childProfileId: actor.enrollment.childProfileId,
+        activeEnrollmentId: actor.enrollment._id,
+        type: "recovery",
+        episodeKey: health.activeOfflineEpisodeKey,
+        serverNow: args.input.serverNow,
+      });
+    }
+    const newlyUnavailable = Object.entries(args.input.capabilities)
+      .filter(([key, available]) => !available && (previousCapabilities?.[key as keyof typeof args.input.capabilities] ?? true))
+      .map(([key]) => key);
+    if (newlyUnavailable.length > 0) {
+      await createGuardianNotice(ctx, {
+        householdId: actor.enrollment.householdId,
+        childProfileId: actor.enrollment.childProfileId,
+        activeEnrollmentId: actor.enrollment._id,
+        type: "tamper",
+        episodeKey: `tamper:${args.input.serverNow}`,
+        unavailableCapabilities: newlyUnavailable,
+        serverNow: args.input.serverNow,
+      });
+    }
     await ctx.scheduler.runAt(
       args.input.serverNow + OFFLINE_AFTER_MS,
       internal.modules.deviceIdentity.internal.markOfflineIfStale,
@@ -263,13 +310,80 @@ export const markOfflineIfStale = internalMutation({
       .unique();
     if (health === null) return false;
     if ((health.lastHeartbeatAt ?? null) !== args.expectedLastHeartbeatAt) return false;
+    if (health.connectivityStatus === "offline") return false;
+    const episodeKey = `offline:${args.serverNow}`;
     await ctx.db.patch("supervisionHealth", health._id, {
       connectivityStatus: "offline",
+      activeOfflineEpisodeKey: episodeKey,
       updatedAt: args.serverNow,
+    });
+    await createGuardianNotice(ctx, {
+      householdId: health.householdId,
+      childProfileId: health.childProfileId,
+      activeEnrollmentId: health.activeEnrollmentId,
+      type: "offline",
+      episodeKey,
+      serverNow: args.serverNow,
     });
     return true;
   },
 });
+
+async function createGuardianNotice(
+  ctx: MutationCtx,
+  args: {
+    householdId: Id<"households">;
+    childProfileId: Id<"childProfiles">;
+    activeEnrollmentId: Id<"activeEnrollments">;
+    type: "offline" | "recovery" | "tamper";
+    episodeKey: string;
+    unavailableCapabilities?: string[];
+    serverNow: number;
+  },
+) {
+  const existing = await ctx.db
+    .query("guardianNotices")
+    .withIndex("by_active_enrollment_id_and_episode_key", (q) =>
+      q.eq("activeEnrollmentId", args.activeEnrollmentId).eq("episodeKey", `${args.type}:${args.episodeKey}`),
+    )
+    .unique();
+  if (existing !== null) return existing._id;
+  const expiresAt = args.serverNow + MESSAGE_RETENTION_MS;
+  const noticeId = await ctx.db.insert("guardianNotices", {
+    householdId: args.householdId,
+    childProfileId: args.childProfileId,
+    activeEnrollmentId: args.activeEnrollmentId,
+    type: args.type,
+    episodeKey: `${args.type}:${args.episodeKey}`,
+    ...(args.unavailableCapabilities === undefined
+      ? {}
+      : { unavailableCapabilities: args.unavailableCapabilities }),
+    status: "active",
+    occurredAt: args.serverNow,
+    expiresAt,
+  });
+  const devices = await ctx.db
+    .query("guardianDevices")
+    .withIndex("by_household_id", (q) => q.eq("householdId", args.householdId))
+    .take(3);
+  for (const device of devices) {
+    if (device.status !== "active") continue;
+    await ctx.db.insert("guardianNoticeReceipts", {
+      guardianNoticeId: noticeId,
+      guardianDeviceId: device._id,
+      householdId: args.householdId,
+      status: "pending",
+      createdAt: args.serverNow,
+      expiresAt,
+    });
+  }
+  await ctx.scheduler.runAfter(0, internal.fcmDelivery.deliver, {
+    recordKind: "guardianNotice",
+    recordId: noticeId,
+    attempt: 1,
+  });
+  return noticeId;
+}
 
 export const createTokenChallenge = internalMutation({
   args: {

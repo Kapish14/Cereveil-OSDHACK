@@ -12,6 +12,8 @@ const createChildProfile = api.modules.childProfiles.public.createChildProfile;
 const createEnrollmentCode = api.modules.deviceIdentity.guardian.createEnrollmentCode;
 const cancelEnrollmentCode = api.modules.deviceIdentity.guardian.cancelEnrollmentCode;
 const getEnrollmentSummary = api.modules.deviceIdentity.guardian.getEnrollmentSummary;
+const reconcileGuardianNotices = api.modules.notifications.public.reconcileGuardianNotices;
+const acknowledgeGuardianNotice = api.modules.notifications.public.acknowledgeGuardianNotice;
 
 const identity = {
   tokenIdentifier: "https://clerk.example|guardian_enrollment",
@@ -280,6 +282,7 @@ describe("Child Enrollment Completion", () => {
       health: await ctx.db.query("supervisionHealth").collect(),
       challenges: await ctx.db.query("childDeviceTokenChallenges").collect(),
       pushTokens: await ctx.db.query("fcmTokens").collect(),
+      commands: await ctx.db.query("childDeviceCommands").collect(),
     }));
     expect(rows.code).toMatchObject({
       status: "consumed",
@@ -301,6 +304,13 @@ describe("Child Enrollment Completion", () => {
     expect(rows.health[0].capabilities).toBeUndefined();
     expect(rows.challenges).toHaveLength(0);
     expect(rows.pushTokens).toHaveLength(0);
+    expect(rows.commands).toEqual([
+      expect.objectContaining({
+        type: "apply_policy_version",
+        policyVersion: 1,
+        status: "pending",
+      }),
+    ]);
   });
 
   test("invalid proof does not consume the code and a consumed code cannot be resumed", async () => {
@@ -352,10 +362,39 @@ describe("Enrolled Child Device APIs", () => {
       connectivityStatus: "offline",
       protectionHealthStatus: "pending",
     });
+    const notices = await enrolled.t.run(async (ctx: MutationCtx) =>
+      await ctx.db.query("guardianNotices").collect(),
+    );
+    expect(notices).toEqual([
+      expect.objectContaining({ type: "offline", status: "active" }),
+    ]);
+    const reconciliation = await enrolled.t.withIdentity(identity).query(reconcileGuardianNotices, {
+      guardianInstallationId: bootstrapArgs.guardianInstallationId,
+      paginationOpts: { numItems: 50, cursor: null },
+    });
+    expect(reconciliation.page).toHaveLength(1);
+    expect(reconciliation.page[0].notice.type).toBe("offline");
+    await enrolled.t.withIdentity(identity).mutation(acknowledgeGuardianNotice, {
+      guardianInstallationId: bootstrapArgs.guardianInstallationId,
+      receiptId: reconciliation.page[0].receiptId,
+      presentation: "suppressed",
+    });
+    const after = await enrolled.t.withIdentity(identity).query(reconcileGuardianNotices, {
+      guardianInstallationId: bootstrapArgs.guardianInstallationId,
+      paginationOpts: { numItems: 50, cursor: null },
+    });
+    expect(after.page).toHaveLength(0);
   });
 
   test("fetches then acknowledges policy and reports first protection heartbeat", async () => {
     const enrolled = await enrolledChild();
+    const commandsResponse = await childRequest(enrolled.t, "/child/commands", enrolled.body.accessJwt, { cursor: null });
+    expect(commandsResponse.status).toBe(200);
+    expect(await commandsResponse.json()).toEqual({
+      commands: [expect.objectContaining({ type: "apply_policy_version", policyVersion: 1 })],
+      continueCursor: expect.any(String),
+      isDone: true,
+    });
     const policyResponse = await childRequest(enrolled.t, "/child/policy", enrolled.body.accessJwt);
     expect(policyResponse.status).toBe(200);
     expect(policyResponse.headers.get("x-request-id")).toMatch(/^[0-9a-f-]{36}$/);
@@ -398,6 +437,10 @@ describe("Enrolled Child Device APIs", () => {
       health: (await ctx.db.query("supervisionHealth").collect())[0],
     }));
     expect(rows.policy).toMatchObject({ status: "applied", appliedPolicyVersion: 1 });
+    const commands = await enrolled.t.run(async (ctx: MutationCtx) =>
+      await ctx.db.query("childDeviceCommands").collect(),
+    );
+    expect(commands[0]).toMatchObject({ status: "acknowledged", policyVersion: 1 });
     expect(rows.health).toMatchObject({
       connectivityStatus: "online",
       protectionStatus: "fully_protected",
@@ -442,6 +485,50 @@ describe("Enrolled Child Device APIs", () => {
     const unauthorized = await childRequest(enrolled.t, "/child/policy", enrolled.body.accessJwt);
     expect(unauthorized.status).toBe(401);
     expect(await unauthorized.json()).toEqual({ code: "CHILD_DEVICE_UNAUTHORIZED" });
+  });
+
+  test("creates deduplicated Tamper Alerts and a correlated Recovery Notice", async () => {
+    const enrolled = await enrolledChild();
+    const capabilities = {
+      accessibilityService: false,
+      usageAccess: true,
+      location: true,
+      microphone: true,
+      notificationAccess: true,
+      batteryOptimizationExempt: true,
+    };
+    for (let index = 0; index < 2; index += 1) {
+      const response = await childRequest(enrolled.t, "/child/heartbeat", enrolled.body.accessJwt, { capabilities });
+      expect(response.status).toBe(200);
+    }
+    let notices = await enrolled.t.run(async (ctx: MutationCtx) =>
+      await ctx.db.query("guardianNotices").collect(),
+    );
+    expect(notices.filter((notice) => notice.type === "tamper")).toEqual([
+      expect.objectContaining({ unavailableCapabilities: ["accessibilityService"] }),
+    ]);
+
+    await enrolled.t.run(async (ctx: MutationCtx) => {
+      const health = (await ctx.db.query("supervisionHealth").collect())[0];
+      await ctx.db.patch("supervisionHealth", health._id, {
+        connectivityStatus: "offline",
+        activeOfflineEpisodeKey: "offline:test-episode",
+      });
+    });
+    const recovered = await childRequest(enrolled.t, "/child/heartbeat", enrolled.body.accessJwt, {
+      capabilities: { ...capabilities, accessibilityService: true },
+    });
+    expect(recovered.status).toBe(200);
+    notices = await enrolled.t.run(async (ctx: MutationCtx) =>
+      await ctx.db.query("guardianNotices").collect(),
+    );
+    expect(notices.filter((notice) => notice.type === "recovery")).toHaveLength(1);
+
+    await childRequest(enrolled.t, "/child/heartbeat", enrolled.body.accessJwt, { capabilities });
+    notices = await enrolled.t.run(async (ctx: MutationCtx) =>
+      await ctx.db.query("guardianNotices").collect(),
+    );
+    expect(notices.filter((notice) => notice.type === "tamper")).toHaveLength(2);
   });
 
   test("registers and rotates FCM delivery state without changing identity", async () => {

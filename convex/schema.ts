@@ -201,6 +201,7 @@ export default defineSchema({
       }),
     ),
     lastHeartbeatAt: v.optional(v.number()),
+    activeOfflineEpisodeKey: v.optional(v.string()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
@@ -236,6 +237,81 @@ export default defineSchema({
   })
     .index("by_child_device_id", ["childDeviceId"])
     .index("by_owner_kind_and_owner_id", ["ownerKind", "ownerId"])
-    .index("by_token_hash", ["tokenHash"]),
+    .index("by_token_hash", ["tokenHash"])
+    .index("by_environment_and_token_hash", ["environment", "tokenHash"])
+    .index("by_status", ["status"]),
+
+  guardianNotices: defineTable({
+    householdId: v.id("households"),
+    childProfileId: v.id("childProfiles"),
+    activeEnrollmentId: v.id("activeEnrollments"),
+    type: v.union(v.literal("offline"), v.literal("recovery"), v.literal("tamper")),
+    episodeKey: v.string(),
+    unavailableCapabilities: v.optional(v.array(v.string())),
+    status: v.union(v.literal("active"), v.literal("expired")),
+    occurredAt: v.number(),
+    expiresAt: v.number(),
+  })
+    .index("by_household_id_and_occurred_at", ["householdId", "occurredAt"])
+    .index("by_active_enrollment_id_and_episode_key", ["activeEnrollmentId", "episodeKey"])
+    .index("by_expires_at", ["expiresAt"]),
+
+  guardianNoticeReceipts: defineTable({
+    guardianNoticeId: v.id("guardianNotices"),
+    guardianDeviceId: v.id("guardianDevices"),
+    householdId: v.id("households"),
+    status: v.union(v.literal("pending"), v.literal("processed")),
+    presentation: v.optional(v.union(v.literal("shown"), v.literal("suppressed"))),
+    createdAt: v.number(),
+    processedAt: v.optional(v.number()),
+    expiresAt: v.number(),
+  })
+    .index("by_guardian_device_id_and_status", ["guardianDeviceId", "status"])
+    .index("by_guardian_notice_id_and_guardian_device_id", ["guardianNoticeId", "guardianDeviceId"])
+    .index("by_expires_at", ["expiresAt"]),
+
+  childDeviceCommands: defineTable({
+    householdId: v.id("households"),
+    childProfileId: v.id("childProfiles"),
+    activeEnrollmentId: v.id("activeEnrollments"),
+    childDeviceId: v.id("childDevices"),
+    type: v.literal("apply_policy_version"),
+    policyVersion: v.number(),
+    intentKey: v.string(),
+    status: v.union(
+      v.literal("pending"),
+      v.literal("acknowledged"),
+      v.literal("rejected"),
+      v.literal("superseded"),
+      v.literal("cancelled"),
+      v.literal("expired"),
+    ),
+    rejectionReason: v.optional(
+      v.union(
+        v.literal("unsupported_command"),
+        v.literal("invalid_command"),
+        v.literal("unable_to_apply"),
+      ),
+    ),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    expiresAt: v.number(),
+    acknowledgedAt: v.optional(v.number()),
+  })
+    .index("by_active_enrollment_id_and_status", ["activeEnrollmentId", "status"])
+    .index("by_active_enrollment_id_and_intent_key", ["activeEnrollmentId", "intentKey"])
+    .index("by_expires_at", ["expiresAt"]),
+
+  fcmDeliveryAttempts: defineTable({
+    recordKind: v.union(v.literal("guardianNotice"), v.literal("childDeviceCommand")),
+    recordId: v.string(),
+    fcmTokenId: v.id("fcmTokens"),
+    attempt: v.number(),
+    outcome: v.union(v.literal("accepted"), v.literal("transient"), v.literal("invalid"), v.literal("exhausted")),
+    attemptedAt: v.number(),
+    expiresAt: v.number(),
+  })
+    .index("by_record_kind_and_record_id", ["recordKind", "recordId"])
+    .index("by_expires_at", ["expiresAt"]),
 
 });

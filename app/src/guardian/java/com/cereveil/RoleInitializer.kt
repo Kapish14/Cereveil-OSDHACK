@@ -2,12 +2,17 @@ package com.cereveil
 
 import android.app.Application
 import android.content.Context
+import android.util.Log
 import com.clerk.api.Clerk
 import com.clerk.api.ClerkConfigurationOptions
 import com.clerk.api.network.serialization.ClerkResult
 import com.clerk.api.session.GetTokenOptions
 import com.cereveil.guardian.auth.GuardianAuthSessionProvider
 import com.cereveil.guardian.auth.GuardianAuthState
+import com.cereveil.guardian.messaging.GuardianPushTokenRegistrar
+import com.google.firebase.FirebaseApp
+import com.google.firebase.FirebaseOptions
+import com.google.firebase.messaging.FirebaseMessaging
 import dev.convex.android.AuthProvider
 import dev.convex.android.ConvexClient
 import dev.convex.android.ConvexClientWithAuth
@@ -18,6 +23,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 
 object RoleInitializer {
   fun initialize(application: Application) {
@@ -35,6 +41,32 @@ object RoleInitializer {
           telemetryEnabled = true,
         ),
     )
+    if (
+      BuildConfig.FIREBASE_APPLICATION_ID.isNotBlank() &&
+        BuildConfig.FIREBASE_API_KEY.isNotBlank() &&
+        BuildConfig.FIREBASE_PROJECT_ID.isNotBlank() &&
+        BuildConfig.FIREBASE_GCM_SENDER_ID.isNotBlank()
+    ) {
+      if (FirebaseApp.getApps(application).isEmpty()) {
+        FirebaseApp.initializeApp(
+          application,
+          FirebaseOptions.Builder()
+            .setApplicationId(BuildConfig.FIREBASE_APPLICATION_ID)
+            .setApiKey(BuildConfig.FIREBASE_API_KEY)
+            .setProjectId(BuildConfig.FIREBASE_PROJECT_ID)
+            .setGcmSenderId(BuildConfig.FIREBASE_GCM_SENDER_ID)
+            .build(),
+        )
+      }
+      FirebaseMessaging.getInstance().token.addOnSuccessListener { token ->
+        Log.i("CereveilFCM", "Guardian FCM token acquired; registering delivery state")
+        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+          GuardianPushTokenRegistrar(application).register(token)
+        }
+      }.addOnFailureListener { error ->
+        Log.e("CereveilFCM", "Guardian FCM token acquisition failed: ${error.javaClass.simpleName}: ${error.message}")
+      }
+    }
   }
 
   fun createConvexClient(application: Application): ConvexClient =

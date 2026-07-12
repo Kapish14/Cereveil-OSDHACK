@@ -72,6 +72,10 @@ _Avoid_: Empty policy, implicit defaults
 The backend's record of the desired Supervision Policy version for an Active Enrollment and the latest version Child Mode has acknowledged as locally applied.
 _Avoid_: Enrollment status, Guardian save state
 
+**Child Device Command**:
+An authoritative, bounded request for Child Mode to perform or reconcile a device action; it may reference a Supervision Policy version but is not part of the policy and does not contain authoritative feature state.
+_Avoid_: Supervision Policy, push payload, background job
+
 **Access Request**:
 A Child-initiated request for temporary Guardian-approved use of a blocked app, delivered to every Guardian Device and resolved by the first valid approve or deny response.
 _Avoid_: Unlock, bypass

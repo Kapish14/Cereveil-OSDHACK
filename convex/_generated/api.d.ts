@@ -8,19 +8,25 @@
  * @module
  */
 
+import type * as crons from "../crons.js";
+import type * as fcmDelivery from "../fcmDelivery.js";
 import type * as http from "../http.js";
 import type * as lib_actors from "../lib/actors.js";
 import type * as lib_auth from "../lib/auth.js";
 import type * as lib_authorize from "../lib/authorize.js";
+import type * as lib_childDeviceHttpAction from "../lib/childDeviceHttpAction.js";
 import type * as lib_encoding from "../lib/encoding.js";
 import type * as lib_errors from "../lib/errors.js";
 import type * as lib_functionWrappers from "../lib/functionWrappers.js";
+import type * as lib_requestLogging from "../lib/requestLogging.js";
 import type * as lib_sensitive from "../lib/sensitive.js";
 import type * as lib_time from "../lib/time.js";
+import type * as messagingCleanup from "../messagingCleanup.js";
 import type * as modules_childProfiles_data from "../modules/childProfiles/data.js";
 import type * as modules_childProfiles_public from "../modules/childProfiles/public.js";
 import type * as modules_childProfiles_useCases from "../modules/childProfiles/useCases.js";
 import type * as modules_childProfiles_validators from "../modules/childProfiles/validators.js";
+import type * as modules_commands_internal from "../modules/commands/internal.js";
 import type * as modules_deviceIdentity_guardian from "../modules/deviceIdentity/guardian.js";
 import type * as modules_deviceIdentity_internal from "../modules/deviceIdentity/internal.js";
 import type * as modules_deviceIdentity_jwt from "../modules/deviceIdentity/jwt.js";
@@ -29,6 +35,7 @@ import type * as modules_guardianAuth_public from "../modules/guardianAuth/publi
 import type * as modules_guardianAuth_useCases from "../modules/guardianAuth/useCases.js";
 import type * as modules_guardianAuth_validators from "../modules/guardianAuth/validators.js";
 import type * as modules_notifications_internal from "../modules/notifications/internal.js";
+import type * as modules_notifications_public from "../modules/notifications/public.js";
 import type * as modules_policies_internal from "../modules/policies/internal.js";
 
 import type {
@@ -38,19 +45,25 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  crons: typeof crons;
+  fcmDelivery: typeof fcmDelivery;
   http: typeof http;
   "lib/actors": typeof lib_actors;
   "lib/auth": typeof lib_auth;
   "lib/authorize": typeof lib_authorize;
+  "lib/childDeviceHttpAction": typeof lib_childDeviceHttpAction;
   "lib/encoding": typeof lib_encoding;
   "lib/errors": typeof lib_errors;
   "lib/functionWrappers": typeof lib_functionWrappers;
+  "lib/requestLogging": typeof lib_requestLogging;
   "lib/sensitive": typeof lib_sensitive;
   "lib/time": typeof lib_time;
+  messagingCleanup: typeof messagingCleanup;
   "modules/childProfiles/data": typeof modules_childProfiles_data;
   "modules/childProfiles/public": typeof modules_childProfiles_public;
   "modules/childProfiles/useCases": typeof modules_childProfiles_useCases;
   "modules/childProfiles/validators": typeof modules_childProfiles_validators;
+  "modules/commands/internal": typeof modules_commands_internal;
   "modules/deviceIdentity/guardian": typeof modules_deviceIdentity_guardian;
   "modules/deviceIdentity/internal": typeof modules_deviceIdentity_internal;
   "modules/deviceIdentity/jwt": typeof modules_deviceIdentity_jwt;
@@ -59,6 +72,7 @@ declare const fullApi: ApiFromModules<{
   "modules/guardianAuth/useCases": typeof modules_guardianAuth_useCases;
   "modules/guardianAuth/validators": typeof modules_guardianAuth_validators;
   "modules/notifications/internal": typeof modules_notifications_internal;
+  "modules/notifications/public": typeof modules_notifications_public;
   "modules/policies/internal": typeof modules_policies_internal;
 }>;
 

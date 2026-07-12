@@ -169,6 +169,52 @@ http.route({
 });
 
 http.route({
+  path: "/child/commands",
+  method: "POST",
+  handler: childDeviceHttpAction({
+    operation: "child.commands.reconcile",
+    logSuccess: false,
+    handler: async (ctx, actor, request) => {
+      const body = await parseJson(request);
+      const cursorValue = body?.cursor;
+      if (cursorValue !== null && cursorValue !== undefined && typeof cursorValue !== "string") {
+        throwAppError("VALIDATION_FAILED");
+      }
+      return await ctx.runQuery(internal.modules.commands.internal.reconcileCommands, {
+        actor,
+        input: { paginationOpts: { numItems: 50, cursor: typeof cursorValue === "string" ? cursorValue : null } },
+      });
+    },
+  }),
+});
+
+http.route({
+  path: "/child/commands/reject",
+  method: "POST",
+  handler: childDeviceHttpAction({
+    operation: "child.commands.reject",
+    logSuccess: true,
+    handler: async (ctx, actor, request) => {
+      const body = await parseJson(request);
+      const commandId = stringField(body, "commandId");
+      const reason = stringField(body, "reason");
+      if (
+        commandId === null ||
+        !["unsupported_command", "invalid_command", "unable_to_apply"].includes(reason ?? "")
+      ) throwAppError("VALIDATION_FAILED");
+      return await ctx.runMutation(internal.modules.commands.internal.rejectCommand, {
+        actor,
+        input: {
+          commandId: commandId as Id<"childDeviceCommands">,
+          reason: reason as "unsupported_command" | "invalid_command" | "unable_to_apply",
+          serverNow: Date.now(),
+        },
+      });
+    },
+  }),
+});
+
+http.route({
   path: "/device-identity/enrollment/complete",
   method: "POST",
   handler: httpAction(async (ctx, request) => {
