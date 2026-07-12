@@ -82,11 +82,6 @@ class ChildEnrollmentCoordinator(
       is ChildEnrollmentResult.Success -> result.value
       is ChildEnrollmentResult.Failure -> return ChildEnrollmentUiState.Enrolled(state, policyApplied = false)
     }
-    try {
-      stateStore.savePolicy(policy)
-    } catch (_: Exception) {
-      return ChildEnrollmentUiState.Enrolled(state, policyApplied = false)
-    }
     return activateAndAcknowledgePolicy(state, policy, policyMismatchRetried)
   }
 
@@ -100,7 +95,10 @@ class ChildEnrollmentCoordinator(
       return ChildEnrollmentUiState.Enrolled(state, policyApplied = false)
     }
     try {
-      policyRuntime.start(policy)
+      if (policyRuntime.start(policy) != PolicyActivationResult.Success) {
+        return ChildEnrollmentUiState.Enrolled(state, policyApplied = false)
+      }
+      stateStore.savePolicy(policy)
     } catch (_: Exception) {
       return ChildEnrollmentUiState.Enrolled(state, policyApplied = false)
     }

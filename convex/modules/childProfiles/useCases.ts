@@ -57,6 +57,7 @@ export async function createChildProfile(
     householdId,
     childProfileId,
     version: policyVersion,
+    schemaVersion: 1,
     status: "active",
     appBlocking: {
       enabled: false,

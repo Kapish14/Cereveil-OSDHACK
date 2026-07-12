@@ -49,6 +49,7 @@ export const completeEnrollment = internalMutation({
     installationId: v.string(),
     deviceLabel: v.optional(v.string()),
     appBuild: v.string(),
+    supportedPolicySchemaVersion: v.number(),
     serverNow: v.number(),
   },
   handler: async (ctx, args) => {
@@ -94,6 +95,12 @@ export const completeEnrollment = internalMutation({
     if (currentPolicy === undefined || currentPolicy.status !== "active") {
       throw new Error("Active Child Profile is missing its current Supervision Policy.");
     }
+    if (
+      !Number.isInteger(args.supportedPolicySchemaVersion) ||
+      args.supportedPolicySchemaVersion < currentPolicy.schemaVersion
+    ) {
+      return { kind: "unsupported_policy" as const };
+    }
 
     const childDeviceId = await ctx.db.insert("childDevices", {
       householdId: household._id,
@@ -114,6 +121,7 @@ export const completeEnrollment = internalMutation({
       enrollmentCodeId: enrollmentCode._id,
       status: "active",
       roleLockActive: true,
+      supportedPolicySchemaVersion: args.supportedPolicySchemaVersion,
       enrolledAt: args.serverNow,
       createdAt: args.serverNow,
       updatedAt: args.serverNow,
@@ -237,7 +245,11 @@ const capabilitiesValidator = v.object({
 export const recordHeartbeat = internalMutation({
   args: {
     actor: childDeviceActorValidator,
-    input: v.object({ capabilities: capabilitiesValidator, serverNow: v.number() }),
+    input: v.object({
+      capabilities: capabilitiesValidator,
+      supportedPolicySchemaVersion: v.number(),
+      serverNow: v.number(),
+    }),
   },
   handler: async (ctx, args) => {
     const actor = await requireActiveChildDeviceActor(ctx, args.actor);
@@ -248,6 +260,16 @@ export const recordHeartbeat = internalMutation({
       )
       .unique();
     if (health === null) throwAppError("INTERNAL_ERROR");
+    if (
+      !Number.isInteger(args.input.supportedPolicySchemaVersion) ||
+      args.input.supportedPolicySchemaVersion < 1
+    ) throwAppError("VALIDATION_FAILED");
+    if (actor.enrollment.supportedPolicySchemaVersion !== args.input.supportedPolicySchemaVersion) {
+      await ctx.db.patch("activeEnrollments", actor.enrollment._id, {
+        supportedPolicySchemaVersion: args.input.supportedPolicySchemaVersion,
+        updatedAt: args.input.serverNow,
+      });
+    }
     const wasOffline = health.connectivityStatus === "offline";
     const previousCapabilities = health.capabilities;
     const fullyProtected = Object.values(args.input.capabilities).every(Boolean);

@@ -21,6 +21,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
+import com.cereveil.BuildConfig
+import com.cereveil.guardian.policy.GuardianPolicyContent
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.cereveil.ui.CereveilCard
@@ -162,6 +164,7 @@ private fun ProfileList(
     if (detailProfile.unavailableCapabilities.isNotEmpty()) {
       Text("Unavailable: ${detailProfile.unavailableCapabilities.joinToString()}")
     }
+    if (BuildConfig.DEBUG) GuardianPolicyContent(detailProfile.childProfileId)
     CereveilSecondaryButton(text = "Back to children", onClick = { detailProfileId = null })
     return
   }

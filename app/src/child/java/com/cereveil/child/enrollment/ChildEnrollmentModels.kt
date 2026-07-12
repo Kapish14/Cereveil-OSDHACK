@@ -3,6 +3,7 @@ package com.cereveil.child.enrollment
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.boolean
 
 data class EnrollmentQrPayload(val code: String) {
   companion object {
@@ -53,8 +54,39 @@ data class LocalChildEnrollmentState(
 
 data class ChildSupervisionPolicy(
   val version: Int,
+  val schemaVersion: Int,
+  val appBlocking: AppBlockingPolicy,
+  val safeBrowsing: SafeBrowsingPolicy,
+  val activeScreenSafety: ActiveScreenSafetyPolicy,
+  val screenTimeSummariesEnabled: Boolean,
   val rawJson: String,
-)
+) {
+  companion object {
+    fun parse(raw: String): ChildSupervisionPolicy {
+      val value = Json.parseToJsonElement(raw).jsonObject
+      val schemaVersion = value["schemaVersion"]?.jsonPrimitive?.content?.toIntOrNull()
+        ?: error("Missing policy schema version")
+      require(schemaVersion == 1) { "Unsupported policy schema" }
+      val safeBrowsing = value["safeBrowsing"]!!.jsonObject
+      val safeBrowsingEnabled = safeBrowsing["enabled"]!!.jsonPrimitive.boolean
+      val safeSearchEnabled = safeBrowsing["safeSearchEnabled"]!!.jsonPrimitive.boolean
+      require(safeBrowsingEnabled || !safeSearchEnabled) { "Safe Search requires Safe Browsing" }
+      return ChildSupervisionPolicy(
+        version = value["version"]!!.jsonPrimitive.content.toInt(),
+        schemaVersion = schemaVersion,
+        appBlocking = AppBlockingPolicy(value["appBlocking"]!!.jsonObject["enabled"]!!.jsonPrimitive.boolean),
+        safeBrowsing = SafeBrowsingPolicy(safeBrowsingEnabled, safeSearchEnabled),
+        activeScreenSafety = ActiveScreenSafetyPolicy(value["activeScreenSafety"]!!.jsonObject["enabled"]!!.jsonPrimitive.boolean),
+        screenTimeSummariesEnabled = value["screenTimeSummariesEnabled"]!!.jsonPrimitive.boolean,
+        rawJson = raw,
+      )
+    }
+  }
+}
+
+data class AppBlockingPolicy(val enabled: Boolean)
+data class SafeBrowsingPolicy(val enabled: Boolean, val safeSearchEnabled: Boolean)
+data class ActiveScreenSafetyPolicy(val enabled: Boolean)
 
 data class ChildDeviceCommand(
   val commandId: String,
@@ -83,6 +115,7 @@ enum class ChildEnrollmentError {
   ValidationFailed,
   Unauthorized,
   PolicyVersionMismatch,
+  InvalidPolicy,
   InternalError,
   NetworkUnavailable,
 }
@@ -141,6 +174,18 @@ interface ChildEnrollmentStateStore {
   fun loadPolicy(): ChildSupervisionPolicy?
 }
 
+sealed interface PolicyActivationResult {
+  data object Success : PolicyActivationResult
+  data object RetryableFailure : PolicyActivationResult
+  data class PermanentFailure(val reason: PolicyPermanentFailureReason) : PolicyActivationResult
+}
+
+enum class PolicyPermanentFailureReason(val wireValue: String) {
+  UnsupportedSchema("unsupported_schema"),
+  InvalidPolicy("invalid_command"),
+  UnableToApply("unable_to_apply"),
+}
+
 fun interface PolicyControlledRuntime {
-  fun start(policy: ChildSupervisionPolicy)
+  fun start(policy: ChildSupervisionPolicy): PolicyActivationResult
 }

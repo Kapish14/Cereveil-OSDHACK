@@ -1,0 +1,3 @@
+# Reject stale Supervision Policy saves
+
+Guardian Mode will submit the Supervision Policy version on which an edit was based, and Convex will create a new version only when that version is still current. If another Guardian Device has already saved a newer version, Convex rejects the stale save and Guardian Mode reloads the current policy for review instead of silently overwriting or merging settings; this prevents lost updates while keeping each immutable policy version a deliberate, complete Guardian configuration. Each deliberate Save action also carries a stable operation identifier reused across automatic retries: repeating the same operation and draft returns its previously created version, while reusing the identifier with different content is rejected.

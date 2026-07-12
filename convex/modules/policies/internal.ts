@@ -21,6 +21,7 @@ export const getCurrentPolicy = internalQuery({
     if (policy === undefined || policy.status !== "active") throwAppError("INTERNAL_ERROR");
     return {
       version: policy.version,
+      schemaVersion: policy.schemaVersion,
       appBlocking: policy.appBlocking,
       safeBrowsing: policy.safeBrowsing,
       activeScreenSafety: policy.activeScreenSafety,
@@ -49,6 +50,7 @@ export const acknowledgePolicy = internalMutation({
     await ctx.db.patch("policyApplicationStates", state._id, {
       appliedPolicyVersion: args.input.appliedPolicyVersion,
       status: "applied",
+      failureReason: undefined,
       updatedAt: args.input.serverNow,
     });
     const commands = await ctx.db

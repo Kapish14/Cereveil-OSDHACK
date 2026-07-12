@@ -56,7 +56,7 @@ class ChildSupervisionSyncCoordinator(
   private val store: ChildEnrollmentStateStore,
   private val capabilities: () -> ChildCapabilities,
   private val refreshToken: suspend () -> ChildEnrollmentResult<String>,
-  private val runtime: PolicyControlledRuntime = PolicyControlledRuntime { },
+  private val runtime: PolicyControlledRuntime = PolicyControlledRuntime { PolicyActivationResult.Success },
   private val now: () -> Long = System::currentTimeMillis,
 ) {
   suspend fun sync(): ChildSupervisionSyncOutcome {
@@ -88,12 +88,35 @@ class ChildSupervisionSyncCoordinator(
                   retry = true
                   continue
                 }
-                store.savePolicy(fetched.value)
-                runtime.start(fetched.value)
+                val activation = try {
+                  runtime.start(fetched.value)
+                } catch (_: Exception) {
+                  PolicyActivationResult.RetryableFailure
+                }
+                when (activation) {
+                  PolicyActivationResult.Success -> store.savePolicy(fetched.value)
+                  PolicyActivationResult.RetryableFailure -> {
+                    retry = true
+                    continue
+                  }
+                  is PolicyActivationResult.PermanentFailure -> {
+                    when (val rejected = client.rejectCommand(token, command.commandId, activation.reason.wireValue)) {
+                    is ChildEnrollmentResult.Success -> Unit
+                    is ChildEnrollmentResult.Failure -> if (rejected.error == ChildEnrollmentError.Unauthorized) {
+                      return ChildSupervisionSyncOutcome.Stop
+                    }
+                    }
+                    continue
+                  }
+                }
                 applied = fetched.value
               }
               is ChildEnrollmentResult.Failure -> {
                 if (fetched.error == ChildEnrollmentError.Unauthorized) return ChildSupervisionSyncOutcome.Stop
+                if (fetched.error == ChildEnrollmentError.InvalidPolicy) {
+                  client.rejectCommand(token, command.commandId, "invalid_command")
+                  continue
+                }
                 retry = true
                 continue
               }

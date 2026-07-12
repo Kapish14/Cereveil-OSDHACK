@@ -36,6 +36,7 @@ class HttpChildDeviceIdentityClient(convexSiteUrl: String) : ChildDeviceIdentity
     put("installationId", installationId)
     deviceLabel?.let { put("deviceLabel", it) }
     put("appBuild", appBuild)
+    put("supportedPolicySchemaVersion", 1)
   }).map { value ->
     ChildEnrollmentCompletion(
       childDeviceId = value.string("childDeviceId"),
@@ -51,15 +52,22 @@ class HttpChildDeviceIdentityClient(convexSiteUrl: String) : ChildDeviceIdentity
     )
   }
 
-  override suspend fun fetchPolicy(accessJwt: String) = request("/child/policy", accessJwt = accessJwt).map { value ->
-    ChildSupervisionPolicy(value.int("version"), value.toString())
-  }
+  override suspend fun fetchPolicy(accessJwt: String): ChildEnrollmentResult<ChildSupervisionPolicy> =
+    when (val result = request("/child/policy", accessJwt = accessJwt)) {
+      is ChildEnrollmentResult.Failure -> result
+      is ChildEnrollmentResult.Success -> runCatching { ChildSupervisionPolicy.parse(result.value.toString()) }
+        .fold(
+          onSuccess = { ChildEnrollmentResult.Success(it) },
+          onFailure = { ChildEnrollmentResult.Failure(ChildEnrollmentError.InvalidPolicy) },
+        )
+    }
 
   override suspend fun acknowledgePolicy(accessJwt: String, version: Int) =
     request("/child/policy/acknowledge", accessJwt, buildJsonObject { put("appliedPolicyVersion", version) }).unit()
 
   override suspend fun heartbeat(accessJwt: String, capabilities: ChildCapabilities) =
     request("/child/heartbeat", accessJwt, buildJsonObject {
+      put("supportedPolicySchemaVersion", 1)
       put("capabilities", buildJsonObject {
         put("accessibilityService", capabilities.accessibilityService)
         put("usageAccess", capabilities.usageAccess)

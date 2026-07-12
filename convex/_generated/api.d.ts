@@ -36,6 +36,7 @@ import type * as modules_guardianAuth_useCases from "../modules/guardianAuth/use
 import type * as modules_guardianAuth_validators from "../modules/guardianAuth/validators.js";
 import type * as modules_notifications_internal from "../modules/notifications/internal.js";
 import type * as modules_notifications_public from "../modules/notifications/public.js";
+import type * as modules_policies_guardian from "../modules/policies/guardian.js";
 import type * as modules_policies_internal from "../modules/policies/internal.js";
 
 import type {
@@ -73,6 +74,7 @@ declare const fullApi: ApiFromModules<{
   "modules/guardianAuth/validators": typeof modules_guardianAuth_validators;
   "modules/notifications/internal": typeof modules_notifications_internal;
   "modules/notifications/public": typeof modules_notifications_public;
+  "modules/policies/guardian": typeof modules_policies_guardian;
   "modules/policies/internal": typeof modules_policies_internal;
 }>;
 

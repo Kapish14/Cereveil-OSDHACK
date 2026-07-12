@@ -200,6 +200,7 @@ private fun childErrorText(error: ChildEnrollmentError) = when (error) {
   ChildEnrollmentError.EnrollmentFailed -> "Enrollment could not be completed."
   ChildEnrollmentError.ValidationFailed -> "The Child Device sent an invalid request."
   ChildEnrollmentError.PolicyVersionMismatch -> "Guardian protection settings have changed."
+  ChildEnrollmentError.InvalidPolicy -> "Guardian protection settings could not be validated."
   ChildEnrollmentError.InternalError -> "Cereveil could not complete the request."
   ChildEnrollmentError.NetworkUnavailable -> "Check the internet connection on both phones."
   ChildEnrollmentError.Unauthorized -> "This Child Device is no longer authorized."

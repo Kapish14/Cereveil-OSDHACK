@@ -44,7 +44,7 @@ class ChildEnrollmentCoordinatorTest {
   }
 
   @Test
-  fun completionPersistsRoleLockBeforeFetchingAndStoresPolicyBeforeStartingRuntime() = runTest {
+  fun completionPersistsRoleLockBeforeFetchingAndAcceptsPolicyAfterStartingRuntime() = runTest {
     val harness = Harness()
 
     val result = harness.coordinator.complete(EnrollmentQrPayload("AAAAAAAAAAAAAAAAAAAAAA"))
@@ -58,8 +58,8 @@ class ChildEnrollmentCoordinatorTest {
         "client:complete",
         "store:enrollment",
         "client:fetch-policy",
-        "store:policy",
         "runtime:start",
+        "store:policy",
         "client:ack",
         "store:acknowledged",
         "client:heartbeat",
@@ -88,7 +88,7 @@ class ChildEnrollmentCoordinatorTest {
   fun resumedPolicyFlowRefreshesExpiredJwtBeforeAcknowledgementAndHeartbeat() = runTest {
     val harness = Harness().apply {
       store.save(completionState())
-      store.savePolicy(ChildSupervisionPolicy(1, """{"version":1}"""))
+      store.savePolicy(testPolicy())
       events.clear()
     }
 
@@ -102,6 +102,7 @@ class ChildEnrollmentCoordinatorTest {
         "client:exchange",
         "store:token",
         "runtime:start",
+        "store:policy",
         "client:ack",
         "store:acknowledged",
         "client:heartbeat",
@@ -123,7 +124,7 @@ class ChildEnrollmentCoordinatorTest {
   fun supervisionSyncPreservesPolicyAcknowledgementWhenHeartbeatNeedsRetry() = runTest {
     val harness = Harness().apply {
       store.save(completionState().copy(accessJwtExpiresAt = Long.MAX_VALUE))
-      store.savePolicy(ChildSupervisionPolicy(1, """{"version":1}"""))
+      store.savePolicy(testPolicy())
       client.heartbeatFails = true
       events.clear()
     }
@@ -152,16 +153,68 @@ class ChildEnrollmentCoordinatorTest {
       store = harness.store,
       capabilities = { ChildCapabilities(true, true, true, true, true, true) },
       refreshToken = { ChildEnrollmentResult.Failure(ChildEnrollmentError.EnrollmentFailed) },
-      runtime = PolicyControlledRuntime { harness.events += "runtime:start" },
+      runtime = PolicyControlledRuntime {
+        harness.events += "runtime:start"
+        PolicyActivationResult.Success
+      },
       now = { 1L },
     )
 
     assertEquals(ChildSupervisionSyncOutcome.Complete, sync.sync())
     assertEquals(1, harness.store.state?.acknowledgedPolicyVersion)
     assertEquals(
-      listOf("client:commands", "client:fetch-policy", "store:policy", "runtime:start", "client:ack", "store:acknowledged", "client:heartbeat"),
+      listOf("client:commands", "client:fetch-policy", "runtime:start", "store:policy", "client:ack", "store:acknowledged", "client:heartbeat"),
       harness.events,
     )
+  }
+
+  @Test
+  fun supervisionSyncRejectsPermanentActivationFailureWithoutAcceptingPolicy() = runTest {
+    val harness = Harness().apply {
+      store.save(completionState().copy(accessJwtExpiresAt = Long.MAX_VALUE))
+      client.commands = listOf(ChildDeviceCommand("command-1", "apply_policy_version", 1, Long.MAX_VALUE))
+      events.clear()
+    }
+    val sync = ChildSupervisionSyncCoordinator(
+      client = harness.client,
+      store = harness.store,
+      capabilities = { ChildCapabilities(true, true, true, true, true, true) },
+      refreshToken = { ChildEnrollmentResult.Failure(ChildEnrollmentError.EnrollmentFailed) },
+      runtime = PolicyControlledRuntime {
+        PolicyActivationResult.PermanentFailure(PolicyPermanentFailureReason.UnableToApply)
+      },
+      now = { 1L },
+    )
+
+    assertEquals(ChildSupervisionSyncOutcome.Complete, sync.sync())
+    assertEquals(null, harness.store.loadPolicy())
+    assertEquals(null, harness.store.state?.acknowledgedPolicyVersion)
+    assertEquals(
+      listOf("client:commands", "client:fetch-policy", "client:reject", "client:heartbeat"),
+      harness.events,
+    )
+  }
+
+  @Test
+  fun supervisionSyncRetriesTransientActivationFailureWithoutRejectingOrAccepting() = runTest {
+    val harness = Harness().apply {
+      store.save(completionState().copy(accessJwtExpiresAt = Long.MAX_VALUE))
+      client.commands = listOf(ChildDeviceCommand("command-1", "apply_policy_version", 1, Long.MAX_VALUE))
+      events.clear()
+    }
+    val sync = ChildSupervisionSyncCoordinator(
+      client = harness.client,
+      store = harness.store,
+      capabilities = { ChildCapabilities(true, true, true, true, true, true) },
+      refreshToken = { ChildEnrollmentResult.Failure(ChildEnrollmentError.EnrollmentFailed) },
+      runtime = PolicyControlledRuntime { PolicyActivationResult.RetryableFailure },
+      now = { 1L },
+    )
+
+    assertEquals(ChildSupervisionSyncOutcome.Retry, sync.sync())
+    assertEquals(null, harness.store.loadPolicy())
+    assertTrue("client:reject" !in harness.events)
+    assertTrue("client:ack" !in harness.events)
   }
 
   private class Harness {
@@ -173,7 +226,10 @@ class ChildEnrollmentCoordinatorTest {
       client,
       keyStore,
       store,
-      PolicyControlledRuntime { events += "runtime:start" },
+      PolicyControlledRuntime {
+        events += "runtime:start"
+        PolicyActivationResult.Success
+      },
       installationId = "install-1",
       deviceLabel = "Pixel",
       appBuild = "1",
@@ -221,7 +277,7 @@ private class FakeClient(private val events: MutableList<String>) : ChildDeviceI
     appBuild: String,
   ) = ChildEnrollmentResult.Success(completion()).also { events += "client:complete" }
   override suspend fun fetchPolicy(accessJwt: String) =
-    ChildEnrollmentResult.Success(ChildSupervisionPolicy(1, """{"version":1}""")).also { events += "client:fetch-policy" }
+    ChildEnrollmentResult.Success(testPolicy()).also { events += "client:fetch-policy" }
   override suspend fun acknowledgePolicy(accessJwt: String, version: Int) =
     ChildEnrollmentResult.Success(Unit).also { events += "client:ack" }
   override suspend fun heartbeat(accessJwt: String, capabilities: ChildCapabilities) =
@@ -247,4 +303,14 @@ private fun completion() = ChildEnrollmentCompletion(
 
 private fun completionState() = LocalChildEnrollmentState(
   "device-1", "enrollment-1", "credential-1", "Aarav", 1, "jwt", 100, 1, "dev", "key-1",
+)
+
+private fun testPolicy() = ChildSupervisionPolicy(
+  version = 1,
+  schemaVersion = 1,
+  appBlocking = AppBlockingPolicy(false),
+  safeBrowsing = SafeBrowsingPolicy(false, false),
+  activeScreenSafety = ActiveScreenSafetyPolicy(false),
+  screenTimeSummariesEnabled = false,
+  rawJson = """{"version":1,"schemaVersion":1,"appBlocking":{"enabled":false},"safeBrowsing":{"enabled":false,"safeSearchEnabled":false},"activeScreenSafety":{"enabled":false},"screenTimeSummariesEnabled":false}""",
 )

@@ -9,6 +9,7 @@ import kotlinx.serialization.json.put
 
 class SharedPreferencesChildEnrollmentStateStore(context: Context) : ChildEnrollmentStateStore {
   private val preferences = context.getSharedPreferences("child_enrollment", Context.MODE_PRIVATE)
+  private val policyPreferences = context.getSharedPreferences("child_policy_runtime", Context.MODE_PRIVATE)
 
   override fun load(): LocalChildEnrollmentState? = preferences.getString("state", null)?.let { raw ->
     runCatching {
@@ -56,15 +57,14 @@ class SharedPreferencesChildEnrollmentStateStore(context: Context) : ChildEnroll
   }
 
   override fun savePolicy(policy: ChildSupervisionPolicy) {
-    check(preferences.edit().putString("policy", policy.rawJson).commit()) {
+    check(policyPreferences.edit().putString("policy", policy.rawJson).commit()) {
       "Child Supervision Policy could not be persisted."
     }
   }
 
-  override fun loadPolicy(): ChildSupervisionPolicy? = preferences.getString("policy", null)?.let { raw ->
+  override fun loadPolicy(): ChildSupervisionPolicy? = policyPreferences.getString("policy", null)?.let { raw ->
     runCatching {
-      val version = Json.parseToJsonElement(raw).jsonObject["version"]!!.jsonPrimitive.content.toInt()
-      ChildSupervisionPolicy(version, raw)
+      ChildSupervisionPolicy.parse(raw)
     }.getOrNull()
   }
 }

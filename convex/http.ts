@@ -135,11 +135,13 @@ http.route({
     operation: "child.heartbeat",
     logSuccess: true,
     handler: async (ctx, actor, request) => {
-      const capabilities = capabilitiesField(await parseJson(request));
-      if (capabilities === null) throwAppError("VALIDATION_FAILED");
+      const body = await parseJson(request);
+      const capabilities = capabilitiesField(body);
+      const supportedPolicySchemaVersion = numberField(body, "supportedPolicySchemaVersion");
+      if (capabilities === null || supportedPolicySchemaVersion === null) throwAppError("VALIDATION_FAILED");
       return await ctx.runMutation(internal.modules.deviceIdentity.internal.recordHeartbeat, {
         actor,
-        input: { capabilities, serverNow: Date.now() },
+        input: { capabilities, supportedPolicySchemaVersion, serverNow: Date.now() },
       });
     },
   }),
@@ -200,13 +202,13 @@ http.route({
       const reason = stringField(body, "reason");
       if (
         commandId === null ||
-        !["unsupported_command", "invalid_command", "unable_to_apply"].includes(reason ?? "")
+        !["unsupported_command", "invalid_command", "unable_to_apply", "unsupported_schema"].includes(reason ?? "")
       ) throwAppError("VALIDATION_FAILED");
       return await ctx.runMutation(internal.modules.commands.internal.rejectCommand, {
         actor,
         input: {
           commandId: commandId as Id<"childDeviceCommands">,
-          reason: reason as "unsupported_command" | "invalid_command" | "unable_to_apply",
+          reason: reason as "unsupported_command" | "invalid_command" | "unable_to_apply" | "unsupported_schema",
           serverNow: Date.now(),
         },
       });
@@ -224,6 +226,7 @@ http.route({
     const proof = stringField(body, "proof");
     const installationId = stringField(body, "installationId");
     const appBuild = stringField(body, "appBuild");
+    const supportedPolicySchemaVersion = numberField(body, "supportedPolicySchemaVersion");
     const deviceLabel = optionalStringField(body, "deviceLabel");
     if (
       code === null ||
@@ -232,6 +235,7 @@ http.route({
       proof === null ||
       installationId === null ||
       appBuild === null ||
+      supportedPolicySchemaVersion === null ||
       installationId.length > 200 ||
       appBuild.length > 100 ||
       deviceLabel === null
@@ -254,11 +258,15 @@ http.route({
       installationId,
       ...(deviceLabel === undefined ? {} : { deviceLabel }),
       appBuild,
+      supportedPolicySchemaVersion,
       serverNow,
     });
     if (result.kind === "invalid_code") return invalidCodeResponse();
     if (result.kind === "already_enrolled") {
       return jsonResponse({ code: "CHILD_ALREADY_ENROLLED" }, 409);
+    }
+    if (result.kind === "unsupported_policy") {
+      return jsonResponse({ code: "POLICY_UNSUPPORTED" }, 409);
     }
 
     const accessJwt = await issueChildDeviceJwt(result, serverNow);

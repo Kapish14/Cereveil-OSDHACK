@@ -14,6 +14,11 @@ const cancelEnrollmentCode = api.modules.deviceIdentity.guardian.cancelEnrollmen
 const getEnrollmentSummary = api.modules.deviceIdentity.guardian.getEnrollmentSummary;
 const reconcileGuardianNotices = api.modules.notifications.public.reconcileGuardianNotices;
 const acknowledgeGuardianNotice = api.modules.notifications.public.acknowledgeGuardianNotice;
+const getPolicyState = api.modules.policies.guardian.getPolicyState;
+const updateScreenTimeSummaries = api.modules.policies.guardian.updateScreenTimeSummaries;
+const updateSafeBrowsing = api.modules.policies.guardian.updateSafeBrowsing;
+const updateAppBlocking = api.modules.policies.guardian.updateAppBlocking;
+const updateActiveScreenSafety = api.modules.policies.guardian.updateActiveScreenSafety;
 
 const identity = {
   tokenIdentifier: "https://clerk.example|guardian_enrollment",
@@ -400,6 +405,7 @@ describe("Enrolled Child Device APIs", () => {
     expect(policyResponse.headers.get("x-request-id")).toMatch(/^[0-9a-f-]{36}$/);
     expect(await policyResponse.json()).toMatchObject({
       version: 1,
+      schemaVersion: 1,
       appBlocking: { enabled: false },
       safeBrowsing: { enabled: false, safeSearchEnabled: false },
       activeScreenSafety: { enabled: false },
@@ -419,6 +425,7 @@ describe("Enrolled Child Device APIs", () => {
       "/child/heartbeat",
       enrolled.body.accessJwt,
       {
+        supportedPolicySchemaVersion: 1,
         capabilities: {
           accessibilityService: true,
           usageAccess: true,
@@ -459,13 +466,165 @@ describe("Enrolled Child Device APIs", () => {
     });
   });
 
+  test("creates, replays, and acknowledges an immutable Guardian policy change", async () => {
+    const enrolled = await enrolledChild();
+    await childRequest(enrolled.t, "/child/policy/acknowledge", enrolled.body.accessJwt, {
+      appliedPolicyVersion: 1,
+    });
+    const args = {
+      guardianInstallationId: bootstrapArgs.guardianInstallationId,
+      childProfileId: enrolled.child.childProfileId,
+      expectedCurrentVersion: 1,
+      operationId: "018f-policy-save-operation-0001",
+      enabled: true,
+    };
+    const changed = await enrolled.t.withIdentity(identity).mutation(updateScreenTimeSummaries, args);
+    expect(changed).toMatchObject({
+      desiredPolicy: { version: 2, schemaVersion: 1, screenTimeSummariesEnabled: true },
+      appliedPolicy: { version: 1, screenTimeSummariesEnabled: false },
+      applicationStatus: "pending",
+    });
+    const replay = await enrolled.t.withIdentity(identity).mutation(updateScreenTimeSummaries, args);
+    expect(replay.desiredPolicy.version).toBe(2);
+    const rows = await enrolled.t.run(async (ctx: MutationCtx) => ({
+      policies: await ctx.db.query("supervisionPolicies").collect(),
+      commands: await ctx.db.query("childDeviceCommands").collect(),
+    }));
+    expect(rows.policies).toHaveLength(2);
+    expect(rows.policies.map((policy) => policy.status).sort()).toEqual(["active", "superseded"]);
+    expect(rows.commands.filter((command) => command.status === "pending")).toEqual([
+      expect.objectContaining({ policyVersion: 2 }),
+    ]);
+    const fetched = await childRequest(enrolled.t, "/child/policy", enrolled.body.accessJwt);
+    expect(await fetched.json()).toMatchObject({ version: 2, screenTimeSummariesEnabled: true });
+    await childRequest(enrolled.t, "/child/policy/acknowledge", enrolled.body.accessJwt, {
+      appliedPolicyVersion: 2,
+    });
+    const applied = await enrolled.t.withIdentity(identity).query(getPolicyState, {
+      guardianInstallationId: bootstrapArgs.guardianInstallationId,
+      childProfileId: enrolled.child.childProfileId,
+    });
+    expect(applied).toMatchObject({
+      applicationStatus: "applied",
+      desiredPolicy: { version: 2 },
+      appliedPolicy: { version: 2 },
+    });
+    const noOp = await enrolled.t.withIdentity(identity).mutation(updateScreenTimeSummaries, {
+      ...args,
+      expectedCurrentVersion: 2,
+      operationId: "018f-policy-save-operation-noop",
+    });
+    expect(noOp.desiredPolicy.version).toBe(2);
+    const afterNoOp = await enrolled.t.run(async (ctx: MutationCtx) => ({
+      policies: await ctx.db.query("supervisionPolicies").collect(),
+      commands: await ctx.db.query("childDeviceCommands").collect(),
+      operations: await ctx.db.query("policySaveOperations").collect(),
+    }));
+    expect(afterNoOp.policies).toHaveLength(2);
+    expect(afterNoOp.commands).toHaveLength(2);
+    expect(afterNoOp.operations).toHaveLength(2);
+  });
+
+  test("rejects stale, contradictory, and reused Guardian policy saves", async () => {
+    const enrolled = await enrolledChild();
+    const common = {
+      guardianInstallationId: bootstrapArgs.guardianInstallationId,
+      childProfileId: enrolled.child.childProfileId,
+      expectedCurrentVersion: 1,
+    };
+    await expectAppError(enrolled.t.withIdentity(identity).mutation(updateSafeBrowsing, {
+      ...common,
+      operationId: "018f-policy-save-invalid-0001",
+      enabled: false,
+      safeSearchEnabled: true,
+    }), "VALIDATION_FAILED");
+    await enrolled.t.withIdentity(identity).mutation(updateScreenTimeSummaries, {
+      ...common,
+      operationId: "018f-policy-save-operation-0002",
+      enabled: true,
+    });
+    await expectAppError(enrolled.t.withIdentity(identity).mutation(updateScreenTimeSummaries, {
+      ...common,
+      operationId: "018f-policy-save-operation-0003",
+      enabled: false,
+    }), "POLICY_CONFLICT");
+    await expectAppError(enrolled.t.withIdentity(identity).mutation(updateScreenTimeSummaries, {
+      ...common,
+      operationId: "018f-policy-save-operation-0002",
+      enabled: false,
+    }), "POLICY_OPERATION_REUSED");
+  });
+
+  test("preserves unrelated sections across successive feature changes", async () => {
+    const enrolled = await enrolledChild();
+    const base = {
+      guardianInstallationId: bootstrapArgs.guardianInstallationId,
+      childProfileId: enrolled.child.childProfileId,
+    };
+    await enrolled.t.withIdentity(identity).mutation(updateSafeBrowsing, {
+      ...base,
+      expectedCurrentVersion: 1,
+      operationId: "018f-policy-safe-browsing-0001",
+      enabled: true,
+      safeSearchEnabled: true,
+    });
+    await enrolled.t.withIdentity(identity).mutation(updateAppBlocking, {
+      ...base,
+      expectedCurrentVersion: 2,
+      operationId: "018f-policy-app-blocking-0001",
+      enabled: true,
+    });
+    const result = await enrolled.t.withIdentity(identity).mutation(updateActiveScreenSafety, {
+      ...base,
+      expectedCurrentVersion: 3,
+      operationId: "018f-policy-screen-safety-0001",
+      enabled: true,
+    });
+    expect(result.desiredPolicy).toMatchObject({
+      version: 4,
+      safeBrowsing: { enabled: true, safeSearchEnabled: true },
+      appBlocking: { enabled: true },
+      activeScreenSafety: { enabled: true },
+    });
+    const commands = await enrolled.t.run(async (ctx: MutationCtx) =>
+      await ctx.db.query("childDeviceCommands").collect(),
+    );
+    expect(commands.filter((command) => command.status === "pending")).toEqual([
+      expect.objectContaining({ policyVersion: 4 }),
+    ]);
+  });
+
+  test("maps permanent rejection only onto the current desired policy", async () => {
+    const enrolled = await enrolledChild();
+    await enrolled.t.withIdentity(identity).mutation(updateScreenTimeSummaries, {
+      guardianInstallationId: bootstrapArgs.guardianInstallationId,
+      childProfileId: enrolled.child.childProfileId,
+      expectedCurrentVersion: 1,
+      operationId: "018f-policy-permanent-failure-1",
+      enabled: true,
+    });
+    const commandsResponse = await childRequest(enrolled.t, "/child/commands", enrolled.body.accessJwt, { cursor: null });
+    const commands = (await commandsResponse.json()).commands as Array<{ commandId: string; policyVersion: number }>;
+    const current = commands.find((command) => command.policyVersion === 2)!;
+    const rejected = await childRequest(enrolled.t, "/child/commands/reject", enrolled.body.accessJwt, {
+      commandId: current.commandId,
+      reason: "unable_to_apply",
+    });
+    expect(rejected.status).toBe(200);
+    const state = await enrolled.t.withIdentity(identity).query(getPolicyState, {
+      guardianInstallationId: bootstrapArgs.guardianInstallationId,
+      childProfileId: enrolled.child.childProfileId,
+    });
+    expect(state).toMatchObject({ applicationStatus: "failed", failureReason: "activation_failed" });
+  });
+
   test("maps authenticated validation and policy conflicts without exposing authorization details", async () => {
     const enrolled = await enrolledChild();
     const invalid = await childRequest(
       enrolled.t,
       "/child/heartbeat",
       enrolled.body.accessJwt,
-      { capabilities: {} },
+      { supportedPolicySchemaVersion: 1, capabilities: {} },
     );
     expect(invalid.status).toBe(400);
     expect(await invalid.json()).toEqual({ code: "VALIDATION_FAILED" });
@@ -498,7 +657,7 @@ describe("Enrolled Child Device APIs", () => {
       batteryOptimizationExempt: true,
     };
     for (let index = 0; index < 2; index += 1) {
-      const response = await childRequest(enrolled.t, "/child/heartbeat", enrolled.body.accessJwt, { capabilities });
+      const response = await childRequest(enrolled.t, "/child/heartbeat", enrolled.body.accessJwt, { supportedPolicySchemaVersion: 1, capabilities });
       expect(response.status).toBe(200);
     }
     let notices = await enrolled.t.run(async (ctx: MutationCtx) =>
@@ -516,6 +675,7 @@ describe("Enrolled Child Device APIs", () => {
       });
     });
     const recovered = await childRequest(enrolled.t, "/child/heartbeat", enrolled.body.accessJwt, {
+      supportedPolicySchemaVersion: 1,
       capabilities: { ...capabilities, accessibilityService: true },
     });
     expect(recovered.status).toBe(200);
@@ -524,7 +684,7 @@ describe("Enrolled Child Device APIs", () => {
     );
     expect(notices.filter((notice) => notice.type === "recovery")).toHaveLength(1);
 
-    await childRequest(enrolled.t, "/child/heartbeat", enrolled.body.accessJwt, { capabilities });
+    await childRequest(enrolled.t, "/child/heartbeat", enrolled.body.accessJwt, { supportedPolicySchemaVersion: 1, capabilities });
     notices = await enrolled.t.run(async (ctx: MutationCtx) =>
       await ctx.db.query("guardianNotices").collect(),
     );
@@ -699,6 +859,7 @@ async function completeEnrollment(
       installationId: "child-installation-1",
       deviceLabel: "Pixel 7a",
       appBuild: "child-debug-1",
+      supportedPolicySchemaVersion: 1,
     }),
   });
 }

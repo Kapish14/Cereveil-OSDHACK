@@ -39,6 +39,7 @@ export const rejectCommand = internalMutation({
         v.literal("unsupported_command"),
         v.literal("invalid_command"),
         v.literal("unable_to_apply"),
+        v.literal("unsupported_schema"),
       ),
       serverNow: v.number(),
     }),
@@ -55,6 +56,27 @@ export const rejectCommand = internalMutation({
       rejectionReason: args.input.reason,
       updatedAt: args.input.serverNow,
     });
+    if (command.type === "apply_policy_version") {
+      const state = await ctx.db
+        .query("policyApplicationStates")
+        .withIndex("by_active_enrollment_id", (q) => q.eq("activeEnrollmentId", actor.enrollment._id))
+        .unique();
+      if (
+        state !== null &&
+        state.desiredPolicyVersion === command.policyVersion &&
+        args.input.reason !== "unsupported_command"
+      ) {
+        await ctx.db.patch("policyApplicationStates", state._id, {
+          status: "failed",
+          failureReason: args.input.reason === "unsupported_schema"
+            ? "unsupported_schema"
+            : args.input.reason === "invalid_command"
+              ? "invalid_policy"
+              : "activation_failed",
+          updatedAt: args.input.serverNow,
+        });
+      }
+    }
     return { ok: true };
   },
 });

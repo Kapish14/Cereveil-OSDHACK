@@ -76,6 +76,7 @@ export default defineSchema({
     householdId: v.id("households"),
     childProfileId: v.id("childProfiles"),
     version: v.number(),
+    schemaVersion: v.number(),
     status: v.union(v.literal("active"), v.literal("superseded")),
     appBlocking: v.object({
       enabled: v.boolean(),
@@ -94,6 +95,15 @@ export default defineSchema({
     .index("by_child_profile_id_and_version", ["childProfileId", "version"])
     .index("by_household_id", ["householdId"])
     .index("by_status", ["status"]),
+
+  policySaveOperations: defineTable({
+    householdId: v.id("households"),
+    childProfileId: v.id("childProfiles"),
+    operationId: v.string(),
+    fingerprint: v.string(),
+    resultPolicyVersion: v.number(),
+    createdAt: v.number(),
+  }).index("by_child_profile_id_and_operation_id", ["childProfileId", "operationId"]),
 
   enrollmentCodes: defineTable({
     householdId: v.id("households"),
@@ -138,6 +148,7 @@ export default defineSchema({
     enrollmentCodeId: v.id("enrollmentCodes"),
     status: v.union(v.literal("active"), v.literal("ended"), v.literal("revoked")),
     roleLockActive: v.boolean(),
+    supportedPolicySchemaVersion: v.number(),
     enrolledAt: v.number(),
     createdAt: v.number(),
     updatedAt: v.number(),
@@ -168,7 +179,12 @@ export default defineSchema({
     childDeviceId: v.id("childDevices"),
     desiredPolicyVersion: v.number(),
     appliedPolicyVersion: v.optional(v.number()),
-    status: v.union(v.literal("pending"), v.literal("applied")),
+    status: v.union(v.literal("pending"), v.literal("applied"), v.literal("failed")),
+    failureReason: v.optional(v.union(
+      v.literal("unsupported_schema"),
+      v.literal("invalid_policy"),
+      v.literal("activation_failed"),
+    )),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
@@ -291,6 +307,7 @@ export default defineSchema({
         v.literal("unsupported_command"),
         v.literal("invalid_command"),
         v.literal("unable_to_apply"),
+        v.literal("unsupported_schema"),
       ),
     ),
     createdAt: v.number(),

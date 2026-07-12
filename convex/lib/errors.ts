@@ -14,6 +14,9 @@ export type AppErrorCode =
   | "ENROLLMENT_FAILED"
   | "CHILD_DEVICE_UNAUTHORIZED"
   | "POLICY_VERSION_MISMATCH"
+  | "POLICY_CONFLICT"
+  | "POLICY_UNSUPPORTED"
+  | "POLICY_OPERATION_REUSED"
   | "INTERNAL_ERROR";
 
 const defaultMessages: Record<AppErrorCode, string> = {
@@ -30,6 +33,9 @@ const defaultMessages: Record<AppErrorCode, string> = {
   ENROLLMENT_FAILED: "Enrollment could not be completed.",
   CHILD_DEVICE_UNAUTHORIZED: "The Child Device is not authorized.",
   POLICY_VERSION_MISMATCH: "The applied policy version is not current.",
+  POLICY_CONFLICT: "The Supervision Policy changed on another Guardian Device.",
+  POLICY_UNSUPPORTED: "The Child Device must be updated before this setting can be changed.",
+  POLICY_OPERATION_REUSED: "The policy Save operation identifier was reused for different settings.",
   INTERNAL_ERROR: "The request could not be completed.",
 };
 
