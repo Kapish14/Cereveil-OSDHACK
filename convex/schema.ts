@@ -95,9 +95,21 @@ export default defineSchema({
       enabled: v.boolean(),
       safeSearchEnabled: v.boolean(),
     }),
-    activeScreenSafety: v.object({
-      enabled: v.boolean(),
-    }),
+    activeScreenSafety: v.union(
+      v.object({ enabled: v.boolean() }),
+      v.object({
+        scamText: v.object({
+          enabled: v.boolean(),
+          monitoredPackageNames: v.array(v.string()),
+          sensitivity: v.union(v.literal("lower"), v.literal("standard"), v.literal("higher")),
+        }),
+        nsfwScreen: v.object({
+          enabled: v.boolean(),
+          monitoredPackageNames: v.array(v.string()),
+          sensitivity: v.union(v.literal("lower"), v.literal("standard"), v.literal("higher")),
+        }),
+      }),
+    ),
     locationSharing: v.optional(v.object({ enabled: v.boolean() })),
     screenTime: v.optional(v.object({ enabled: v.boolean() })),
     screenTimeSummariesEnabled: v.optional(v.boolean()),
@@ -199,6 +211,7 @@ export default defineSchema({
     status: v.union(v.literal("active"), v.literal("ended"), v.literal("revoked")),
     roleLockActive: v.boolean(),
     supportedPolicySchemaVersion: v.number(),
+    supportsNsfwScreenDetection: v.optional(v.boolean()),
     enrolledAt: v.number(),
     createdAt: v.number(),
     updatedAt: v.number(),
@@ -317,10 +330,12 @@ export default defineSchema({
       v.literal("recovery"),
       v.literal("tamper"),
       v.literal("access_request"),
+      v.literal("safety"),
     ),
     episodeKey: v.string(),
     unavailableCapabilities: v.optional(v.array(v.string())),
     accessRequestId: v.optional(v.id("accessRequests")),
+    safetyAlertId: v.optional(v.id("safetyAlerts")),
     status: v.union(v.literal("active"), v.literal("expired")),
     occurredAt: v.number(),
     expiresAt: v.number(),
@@ -328,6 +343,37 @@ export default defineSchema({
     .index("by_household_id_and_occurred_at", ["householdId", "occurredAt"])
     .index("by_active_enrollment_id_and_episode_key", ["activeEnrollmentId", "episodeKey"])
     .index("by_expires_at", ["expiresAt"]),
+
+  safetyAlerts: defineTable({
+    householdId: v.id("households"),
+    childProfileId: v.id("childProfiles"),
+    activeEnrollmentId: v.id("activeEnrollments"),
+    childDeviceId: v.id("childDevices"),
+    incidentId: v.string(),
+    type: v.union(v.literal("scam_text"), v.literal("nsfw_screen")),
+    packageName: v.string(),
+    appLabel: v.string(),
+    confidenceBand: v.union(v.literal("low"), v.literal("medium"), v.literal("high")),
+    policyVersion: v.number(),
+    occurredAt: v.number(),
+    createdAt: v.number(),
+    expiresAt: v.number(),
+  })
+    .index("by_active_enrollment_id_and_incident_id", ["activeEnrollmentId", "incidentId"])
+    .index("by_active_enrollment_id", ["activeEnrollmentId"])
+    .index("by_child_profile_id_and_occurred_at", ["childProfileId", "occurredAt"])
+    .index("by_expires_at", ["expiresAt"]),
+
+  safetyNotificationCooldowns: defineTable({
+    householdId: v.id("households"),
+    childProfileId: v.id("childProfiles"),
+    activeEnrollmentId: v.id("activeEnrollments"),
+    type: v.union(v.literal("scam_text"), v.literal("nsfw_screen")),
+    nextAllowedAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_child_profile_id_and_type", ["childProfileId", "type"])
+    .index("by_active_enrollment_id", ["activeEnrollmentId"]),
 
   guardianNoticeReceipts: defineTable({
     guardianNoticeId: v.id("guardianNotices"),

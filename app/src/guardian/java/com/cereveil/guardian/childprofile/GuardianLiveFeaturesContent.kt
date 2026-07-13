@@ -73,6 +73,13 @@ data class GuardianAccessRequest(
 )
 data class GuardianLocation(val latitude: Double, val longitude: Double, val accuracyMeters: Double, val capturedAt: Long)
 data class GuardianScreenTimeApp(val packageName: String, val label: String, val totalMs: Long)
+data class GuardianSafetyAlert(
+  val incidentId: String,
+  val type: String,
+  val appLabel: String,
+  val confidenceBand: String,
+  val occurredAt: Long,
+)
 data class GuardianLiveFeaturesState(
   val loading: Boolean = true,
   val apps: List<GuardianCatalogApp> = emptyList(),
@@ -85,6 +92,7 @@ data class GuardianLiveFeaturesState(
   val screenMeasuredAt: Long? = null,
   val screenLoading: Boolean = true,
   val screenError: Boolean = false,
+  val safetyAlerts: List<GuardianSafetyAlert> = emptyList(),
   val message: String? = null,
 )
 
@@ -117,6 +125,7 @@ class GuardianLiveFeaturesViewModel(
     subscribePolicy(args)
     subscribeAccess(args)
     subscribeLocation(args)
+    subscribeSafetyAlerts(args)
     if (visible) startScreenRefresh()
     mutable.value = mutable.value.copy(loading = false)
   }
@@ -230,6 +239,20 @@ class GuardianLiveFeaturesViewModel(
     }
   }
 
+  private fun subscribeSafetyAlerts(args: Map<String, Any?>) = viewModelScope.launch {
+    convex.subscribe<List<Map<String, Any?>>>("modules/safetyAlerts/guardian:listSafetyAlerts", args).collect { result ->
+      result.onSuccess { rows -> mutable.value = mutable.value.copy(safetyAlerts = rows.map { row ->
+        GuardianSafetyAlert(
+          incidentId = row["incidentId"].toString(),
+          type = row["type"].toString(),
+          appLabel = row["appLabel"].toString(),
+          confidenceBand = row["confidenceBand"].toString(),
+          occurredAt = (row["occurredAt"] as Number).toLong(),
+        )
+      }) }
+    }
+  }
+
   private suspend fun loadScreenTime(args: Map<String, Any?>) {
     runCatching { convex.mutation<Map<String, Any?>>("modules/screenTime/guardian:getOrRequestScreenTime", args) }
       .onSuccess { value ->
@@ -316,7 +339,7 @@ class GuardianLiveFeaturesViewModel(
 }
 
 @Composable
-fun GuardianLiveFeaturesContent(childProfileId: String) {
+fun GuardianLiveFeaturesContent(childProfileId: String, safetyAlertsFirst: Boolean = false) {
   val application = LocalContext.current.applicationContext as Application
   val factory = remember(childProfileId) { viewModelFactory { initializer {
     GuardianLiveFeaturesViewModel(application, childProfileId)
@@ -329,6 +352,8 @@ fun GuardianLiveFeaturesContent(childProfileId: String) {
   val state by model.state.collectAsStateWithLifecycle()
   if (state.loading) { CircularProgressIndicator(); return }
   state.message?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+
+  if (safetyAlertsFirst) SafetyAlertFeed(state.safetyAlerts)
 
   Text("App blocking", style = MaterialTheme.typography.titleLarge)
   state.catalogSyncedAt?.let {
@@ -424,6 +449,21 @@ fun GuardianLiveFeaturesContent(childProfileId: String) {
   state.screenTime.forEach { row -> CereveilCard {
     Text(row.label)
     Text(formatDuration(row.totalMs))
+  } }
+
+  if (!safetyAlertsFirst) SafetyAlertFeed(state.safetyAlerts)
+}
+
+@Composable
+private fun SafetyAlertFeed(alerts: List<GuardianSafetyAlert>) {
+  Text("Safety alerts", style = MaterialTheme.typography.titleLarge)
+  if (alerts.isEmpty()) Text("No safety alerts from the last week.")
+  alerts.forEach { alert -> CereveilCard {
+    Text(if (alert.type == "scam_text") "Possible scam message" else "NSFW screen content")
+    Text(alert.appLabel)
+    Text("${alert.confidenceBand.replaceFirstChar(Char::uppercase)} confidence")
+    val ageMinutes = (System.currentTimeMillis() - alert.occurredAt).coerceAtLeast(0) / 60_000
+    Text(if (ageMinutes < 1) "Just now" else "$ageMinutes min ago", style = MaterialTheme.typography.labelSmall)
   } }
 }
 

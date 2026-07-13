@@ -35,7 +35,7 @@ This document records the intended Android project shape and implementation tool
 :child:protection
   Accessibility, Usage Access, VPN, location, notification capability checks, foreground services, and enforcement integration.
 
-:child:ml
+:feature:child:ml
   On-device Scam Text Detection and NSFW Screen Detection model wrappers.
 ```
 
@@ -89,12 +89,16 @@ Rules:
 Child enforcement UI includes:
 
 - Block Screen;
-- Safety Warning overlay;
+- Safety Intervention overlays;
 - Remote Audio persistent notice;
 - Protection Degraded warning;
 - offline Access Request message.
 
 These screens should be minimal, predictable, and owned by Cereveil rather than heavily depending on external UI kits.
+
+## Child ML module
+
+`:feature:child:ml` owns the Child-only ONNX Runtime dependency, quantized model and tokenizer assets, one process-wide runtime environment, classifier sessions, preprocessing, predictions, model-version sensitivity mappings, and model tests. Schema v3 initializes and self-checks only the enabled detector sessions before policy acknowledgement, keeps each loaded while its section remains enabled, and releases it on section disablement or End Supervision without closing the process-wide environment from an individual classifier. Child Mode owns Accessibility orchestration, detector-specific Monitored App gating, monitored-window and text extraction, Safety Interventions, Safety Incident suppression, and Safety Alert delivery; each detector idles whenever none of its own Monitored Apps is visible. Guardian builds do not depend on or package the ML module.
 
 ## Android CLI tooling note
 

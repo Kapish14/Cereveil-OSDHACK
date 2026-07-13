@@ -1,11 +1,16 @@
 package com.cereveil.guardian.policy
 
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -54,7 +59,26 @@ fun GuardianPolicyContent(childProfileId: String) {
       PolicyToggle(PolicyControl.SafeSearch, current, onChange = { _, enabled, _ ->
         model.update(PolicyFeature.SafeBrowsing, current.policy.desired.safeBrowsingEnabled, enabled)
       }, enabledByParent = current.policy.desired.safeBrowsingEnabled)
-      PolicyToggle(PolicyControl.ActiveScreenSafety, current, model::update)
+      Text("Active Screen Safety", style = MaterialTheme.typography.titleLarge)
+      SafetyDetectorCard(
+        title = "Scam Text Detection",
+        detector = GuardianSafetyDetector.ScamText,
+        desired = current.policy.desired.scamTextSafety,
+        applied = current.policy.applied?.scamTextSafety,
+        apps = current.catalogApps,
+        saving = current.savingFeature == PolicyFeature.ScamTextSafety,
+        onChange = model::updateSafety,
+      )
+      SafetyDetectorCard(
+        title = "NSFW Screen Detection",
+        detector = GuardianSafetyDetector.NsfwScreen,
+        desired = current.policy.desired.nsfwScreenSafety,
+        applied = current.policy.applied?.nsfwScreenSafety,
+        apps = current.catalogApps,
+        saving = current.savingFeature == PolicyFeature.NsfwScreenSafety,
+        available = current.policy.supportsNsfwScreenDetection,
+        onChange = model::updateSafety,
+      )
       PolicyToggle(PolicyControl.LocationSharing, current, model::update)
       PolicyToggle(PolicyControl.ScreenTime, current, model::update)
       current.updateError?.let { error ->
@@ -65,6 +89,80 @@ fun GuardianPolicyContent(childProfileId: String) {
         )
       }
     }
+  }
+}
+
+@Composable
+private fun SafetyDetectorCard(
+  title: String,
+  detector: GuardianSafetyDetector,
+  desired: GuardianSafetyDetectorPolicy,
+  applied: GuardianSafetyDetectorPolicy?,
+  apps: List<GuardianSelectableApp>,
+  saving: Boolean,
+  available: Boolean = true,
+  onChange: (GuardianSafetyDetector, GuardianSafetyDetectorPolicy) -> Unit,
+) {
+  var search by remember(detector) { mutableStateOf("") }
+  val pending = saving || applied != desired
+  val visibleApps = apps.filter {
+    search.isBlank() || it.label.contains(search, true) || it.packageName.contains(search, true)
+  }
+  CereveilCard {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+      Column(Modifier.weight(1f)) {
+        Text(title, style = MaterialTheme.typography.titleMedium)
+        Text(if (detector == GuardianSafetyDetector.NsfwScreen) "Android 11+ • blur only" else "Visible message text • warning")
+      }
+      if (pending) CircularProgressIndicator(modifier = Modifier.fillMaxWidth(0.08f), strokeWidth = 2.dp)
+      Switch(
+        checked = desired.enabled,
+        onCheckedChange = { enabled -> onChange(detector, desired.copy(enabled = enabled)) },
+        enabled = available && !pending && (!desired.monitoredPackageNames.isEmpty() || desired.enabled),
+      )
+    }
+    if (!available) Text("Unavailable on this Child Device. NSFW Screen Detection requires Android 11 or later.")
+    Text("Sensitivity")
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+      GuardianSafetySensitivity.entries.forEach { sensitivity ->
+        FilterChip(
+          selected = desired.sensitivity == sensitivity,
+          onClick = { onChange(detector, desired.copy(sensitivity = sensitivity)) },
+          label = { Text(sensitivity.name) },
+          enabled = available && !pending,
+        )
+      }
+    }
+    OutlinedTextField(
+      value = search,
+      onValueChange = { search = it },
+      label = { Text("Search monitored apps") },
+      modifier = Modifier.fillMaxWidth(),
+      singleLine = true,
+    )
+    visibleApps.forEach { app ->
+      val selected = app.packageName in desired.monitoredPackageNames
+      Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Checkbox(
+          checked = selected,
+          onCheckedChange = { checked ->
+            if (!checked && desired.enabled && desired.monitoredPackageNames.size == 1) return@Checkbox
+            val packages = if (checked) desired.monitoredPackageNames + app.packageName
+            else desired.monitoredPackageNames - app.packageName
+            onChange(detector, desired.copy(monitoredPackageNames = packages))
+          },
+          enabled = available && !pending,
+        )
+        Column {
+          Text(app.label)
+          Text(app.packageName, style = MaterialTheme.typography.labelSmall)
+        }
+      }
+    }
+    desired.monitoredPackageNames.filter { selected -> apps.none { it.packageName == selected } }.forEach { packageName ->
+      Text("$packageName • not currently installed", style = MaterialTheme.typography.labelSmall)
+    }
+    if (pending) Text("Waiting for Child Device")
   }
 }
 
@@ -109,7 +207,6 @@ private enum class PolicyControl(val label: String, val feature: PolicyFeature) 
   AppBlocking("App Blocking", PolicyFeature.AppBlocking),
   SafeBrowsing("Safe Browsing", PolicyFeature.SafeBrowsing),
   SafeSearch("Safe Search", PolicyFeature.SafeBrowsing),
-  ActiveScreenSafety("Active Screen Safety", PolicyFeature.ActiveScreenSafety),
   LocationSharing("Location sharing", PolicyFeature.LocationSharing),
   ScreenTime("Screen Time", PolicyFeature.ScreenTime);
 
@@ -117,7 +214,6 @@ private enum class PolicyControl(val label: String, val feature: PolicyFeature) 
     AppBlocking -> policy.appBlockingEnabled
     SafeBrowsing -> policy.safeBrowsingEnabled
     SafeSearch -> policy.safeSearchEnabled
-    ActiveScreenSafety -> policy.activeScreenSafetyEnabled
     LocationSharing -> policy.locationSharingEnabled
     ScreenTime -> policy.screenTimeEnabled
   }

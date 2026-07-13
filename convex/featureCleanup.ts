@@ -11,8 +11,12 @@ export const run = internalMutation({
     const serverNow = args.serverNow ?? Date.now();
     let processed = 0;
 
+    const safetyAlerts = await ctx.db.query("safetyAlerts")
+      .withIndex("by_expires_at", (q) => q.lte("expiresAt", serverNow)).take(BATCH_SIZE);
+    for (const row of safetyAlerts) { await ctx.db.delete("safetyAlerts", row._id); processed += 1; }
+
     const grants = await ctx.db.query("accessGrants")
-      .withIndex("by_purge_at", (q) => q.lte("purgeAt", serverNow)).take(BATCH_SIZE);
+      .withIndex("by_purge_at", (q) => q.lte("purgeAt", serverNow)).take(BATCH_SIZE - processed);
     for (const row of grants) { await ctx.db.delete("accessGrants", row._id); processed += 1; }
 
     const accessCapacity = BATCH_SIZE - processed;

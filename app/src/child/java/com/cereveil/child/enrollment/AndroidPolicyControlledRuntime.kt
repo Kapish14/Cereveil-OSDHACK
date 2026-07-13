@@ -7,22 +7,41 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.location.LocationManager
 import androidx.core.app.ActivityCompat
+import com.cereveil.child.protection.ChildSafetyModels
+import com.cereveil.BuildConfig
 class AndroidPolicyControlledRuntime(context: Context) : PolicyControlledRuntime {
   private val context = context.applicationContext
   private val preferences = context.getSharedPreferences("child_policy_runtime", Context.MODE_PRIVATE)
 
   override fun start(policy: ChildSupervisionPolicy): PolicyActivationResult {
+    if (!BuildConfig.DEBUG && (policy.activeScreenSafety.scamText.enabled || policy.activeScreenSafety.nsfwScreen.enabled)) {
+      return PolicyActivationResult.PermanentFailure(PolicyPermanentFailureReason.UnableToApply)
+    }
+    val previousPolicy = preferences.getString("policy", null)
+      ?.let { runCatching { ChildSupervisionPolicy.parse(it) }.getOrNull() }
+    if (!ChildSafetyModels.configure(context, policy.activeScreenSafety)) {
+      return PolicyActivationResult.PermanentFailure(PolicyPermanentFailureReason.UnableToApply)
+    }
     val saved = preferences.edit()
         .putInt("active_policy_version", policy.version)
         .putString("policy", policy.rawJson)
         .putBoolean("app_blocking_enabled", policy.appBlocking.enabled)
         .putBoolean("safe_browsing_enabled", policy.safeBrowsing.enabled)
         .putBoolean("safe_search_enabled", policy.safeBrowsing.safeSearchEnabled)
-        .putBoolean("active_screen_safety_enabled", policy.activeScreenSafety.enabled)
+        .putBoolean("scam_text_enabled", policy.activeScreenSafety.scamText.enabled)
+        .putStringSet("scam_text_packages", policy.activeScreenSafety.scamText.monitoredPackageNames)
+        .putString("scam_text_sensitivity", policy.activeScreenSafety.scamText.sensitivity.wireValue)
+        .putBoolean("nsfw_screen_enabled", policy.activeScreenSafety.nsfwScreen.enabled)
+        .putStringSet("nsfw_screen_packages", policy.activeScreenSafety.nsfwScreen.monitoredPackageNames)
+        .putString("nsfw_screen_sensitivity", policy.activeScreenSafety.nsfwScreen.sensitivity.wireValue)
         .putBoolean("location_sharing_enabled", policy.locationSharing.enabled)
         .putBoolean("screen_time_enabled", policy.screenTime.enabled)
         .commit()
-    if (!saved) return PolicyActivationResult.RetryableFailure
+    if (!saved) {
+      if (previousPolicy == null) ChildSafetyModels.release()
+      else ChildSafetyModels.configure(context, previousPolicy.activeScreenSafety)
+      return PolicyActivationResult.RetryableFailure
+    }
     ChildLocationMovementRegistration.configure(context, policy.locationSharing.enabled)
     return PolicyActivationResult.Success
   }

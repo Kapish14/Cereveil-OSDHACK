@@ -36,6 +36,22 @@ class ConvexGuardianPolicyClient(
     ) })
   }
 
+  override fun observeCatalog(childProfileId: String): Flow<GuardianPolicyResult<List<GuardianSelectableApp>>> = flow {
+    val installationId = installationId() ?: run {
+      emit(GuardianPolicyResult.Failure(GuardianPolicyError.Unauthenticated)); return@flow
+    }
+    emitAll(convex.subscribe<Map<String, Any?>>("modules/appCatalog/guardian:getLatestAppCatalog", mapOf(
+      "guardianInstallationId" to installationId,
+      "childProfileId" to childProfileId,
+    )).map { result -> result.fold(
+      onSuccess = { value ->
+        @Suppress("UNCHECKED_CAST") val apps = value["apps"] as? List<Map<String, Any?>> ?: emptyList()
+        GuardianPolicyResult.Success(apps.map { GuardianSelectableApp(it["packageName"].toString(), it["label"].toString()) })
+      },
+      onFailure = { GuardianPolicyResult.Failure(GuardianPolicyError.Retryable) },
+    ) })
+  }
+
   override suspend fun update(
     childProfileId: String,
     expectedVersion: Int,
@@ -49,7 +65,8 @@ class ConvexGuardianPolicyClient(
     val function = when (feature) {
       PolicyFeature.AppBlocking -> "modules/policies/guardian:updateAppBlocking"
       PolicyFeature.SafeBrowsing -> "modules/policies/guardian:updateSafeBrowsing"
-      PolicyFeature.ActiveScreenSafety -> "modules/policies/guardian:updateActiveScreenSafety"
+      PolicyFeature.ScamTextSafety, PolicyFeature.NsfwScreenSafety ->
+        return GuardianPolicyResult.Failure(GuardianPolicyError.Invalid)
       PolicyFeature.LocationSharing -> "modules/policies/guardian:updateLocationSharing"
       PolicyFeature.ScreenTime -> "modules/policies/guardian:updateScreenTime"
     }
@@ -62,6 +79,37 @@ class ConvexGuardianPolicyClient(
     )
     if (feature == PolicyFeature.SafeBrowsing) args["safeSearchEnabled"] = safeSearchEnabled
     GuardianPolicyResult.Success(convex.mutation<Map<String, Any?>>(function, args).policyState())
+  } catch (error: ConvexError) {
+    GuardianPolicyResult.Failure(policyError(error.data))
+  } catch (_: Exception) {
+    GuardianPolicyResult.Failure(GuardianPolicyError.Retryable)
+  }
+
+  override suspend fun updateSafety(
+    childProfileId: String,
+    expectedVersion: Int,
+    operationId: String,
+    scamText: GuardianSafetyDetectorPolicy,
+    nsfwScreen: GuardianSafetyDetectorPolicy,
+  ): GuardianPolicyResult<GuardianPolicyState> = try {
+    val installationId = installationId()
+      ?: return GuardianPolicyResult.Failure(GuardianPolicyError.Unauthenticated)
+    fun GuardianSafetyDetectorPolicy.payload() = mapOf(
+      "enabled" to enabled,
+      "monitoredPackageNames" to monitoredPackageNames.sorted(),
+      "sensitivity" to sensitivity.wireValue,
+    )
+    GuardianPolicyResult.Success(convex.mutation<Map<String, Any?>>(
+      "modules/policies/guardian:updateActiveScreenSafety",
+      mapOf(
+        "guardianInstallationId" to installationId,
+        "childProfileId" to childProfileId,
+        "expectedCurrentVersion" to expectedVersion.toLong(),
+        "operationId" to operationId,
+        "scamText" to scamText.payload(),
+        "nsfwScreen" to nsfwScreen.payload(),
+      ),
+    ).policyState())
   } catch (error: ConvexError) {
     GuardianPolicyResult.Failure(policyError(error.data))
   } catch (_: Exception) {
@@ -88,6 +136,15 @@ fun policyOperationId(
     .toByteArray(StandardCharsets.UTF_8)
 ).toString()
 
+fun safetyPolicyOperationId(
+  childProfileId: String,
+  expectedVersion: Int,
+  scamText: GuardianSafetyDetectorPolicy,
+  nsfwScreen: GuardianSafetyDetectorPolicy,
+): String = UUID.nameUUIDFromBytes(
+  "$childProfileId|$expectedVersion|$scamText|$nsfwScreen".toByteArray(StandardCharsets.UTF_8),
+).toString()
+
 private fun Map<String, Any?>.policyState() = GuardianPolicyState(
   desired = (this["desiredPolicy"] as Map<String, Any?>).policy(),
   applied = (this["appliedPolicy"] as? Map<String, Any?>)?.policy(),
@@ -104,6 +161,7 @@ private fun Map<String, Any?>.policyState() = GuardianPolicyState(
     "activation_failed" -> PolicyFailureReason.ActivationFailed
     else -> error("Unknown policy failure")
   },
+  supportsNsfwScreenDetection = this["supportsNsfwScreenDetection"] as? Boolean ?: false,
 )
 
 private fun Map<String, Any?>.policy(): GuardianPolicy {
@@ -112,13 +170,27 @@ private fun Map<String, Any?>.policy(): GuardianPolicy {
   val activeScreenSafety = this["activeScreenSafety"] as Map<String, Any?>
   val locationSharing = this["locationSharing"] as Map<String, Any?>
   val screenTime = this["screenTime"] as Map<String, Any?>
+  fun detector(name: String): GuardianSafetyDetectorPolicy {
+    @Suppress("UNCHECKED_CAST") val value = activeScreenSafety[name] as Map<String, Any?>
+    @Suppress("UNCHECKED_CAST") val packages = value["monitoredPackageNames"] as? List<String> ?: emptyList()
+    return GuardianSafetyDetectorPolicy(
+      enabled = value["enabled"] as Boolean,
+      monitoredPackageNames = packages.toSet(),
+      sensitivity = when (value["sensitivity"].toString()) {
+        "lower" -> GuardianSafetySensitivity.Lower
+        "higher" -> GuardianSafetySensitivity.Higher
+        else -> GuardianSafetySensitivity.Standard
+      },
+    )
+  }
   return GuardianPolicy(
     version = (this["version"] as Number).toInt(),
     schemaVersion = (this["schemaVersion"] as Number).toInt(),
     appBlockingEnabled = appBlocking["enabled"] as Boolean,
     safeBrowsingEnabled = safeBrowsing["enabled"] as Boolean,
     safeSearchEnabled = safeBrowsing["safeSearchEnabled"] as Boolean,
-    activeScreenSafetyEnabled = activeScreenSafety["enabled"] as Boolean,
+    scamTextSafety = detector("scamText"),
+    nsfwScreenSafety = detector("nsfwScreen"),
     locationSharingEnabled = locationSharing["enabled"] as Boolean,
     screenTimeEnabled = screenTime["enabled"] as Boolean,
   )

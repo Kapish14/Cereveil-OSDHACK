@@ -1,3 +1,7 @@
+---
+status: superseded by ADR-0087
+---
+
 # Generate and expire Safety Incident Summaries in the backend
 
 Cereveil will generate weekly Safety Incident Summaries using backend scheduled work in Convex rather than relying on Guardian Mode opening the app. At the end of each weekly period, Convex will aggregate the prior week's metadata-only Safety Alerts, create the Guardian-facing summary, send the corresponding Guardian Notice, and delete the individual Safety Alerts covered by that summary. Convex will also automatically delete the previous weekly summary before or when the next summary replaces it. This adds scheduled retention work to the backend, but keeps privacy cleanup and summary delivery reliable even when Guardian Devices are offline or unused.

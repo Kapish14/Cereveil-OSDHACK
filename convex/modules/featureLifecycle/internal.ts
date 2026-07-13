@@ -10,6 +10,18 @@ export async function deleteEnrollmentFeatureBatch(
   ctx: MutationCtx,
   activeEnrollmentId: Id<"activeEnrollments">,
 ): Promise<boolean> {
+  const safetyAlerts = await ctx.db.query("safetyAlerts")
+    .withIndex("by_active_enrollment_id", (q) => q.eq("activeEnrollmentId", activeEnrollmentId)).take(BATCH);
+  if (safetyAlerts.length > 0) {
+    for (const row of safetyAlerts) await ctx.db.delete("safetyAlerts", row._id);
+    return false;
+  }
+  const safetyCooldowns = await ctx.db.query("safetyNotificationCooldowns")
+    .withIndex("by_active_enrollment_id", (q) => q.eq("activeEnrollmentId", activeEnrollmentId)).take(BATCH);
+  if (safetyCooldowns.length > 0) {
+    for (const row of safetyCooldowns) await ctx.db.delete("safetyNotificationCooldowns", row._id);
+    return false;
+  }
   const snapshot = (await ctx.db.query("screenTimeSnapshots")
     .withIndex("by_active_enrollment_id_and_status", (q) => q.eq("activeEnrollmentId", activeEnrollmentId)).take(1)).at(0);
   if (snapshot !== undefined) {

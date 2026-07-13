@@ -40,6 +40,8 @@ fun GuardianChildProfileSetupContent(
   viewModel: GuardianChildProfileSetupViewModel = viewModel(),
   onSetUpChildDevice: (ChildProfileSummary) -> Unit = {},
   refreshKey: Int = 0,
+  initialDetailProfileId: String? = null,
+  initialOpenSafetyFeed: Boolean = false,
 ) {
   LaunchedEffect(authSessionKey, refreshKey) { viewModel.loadForSession(authSessionKey) }
   val state by viewModel.state.collectAsStateWithLifecycle()
@@ -49,6 +51,8 @@ fun GuardianChildProfileSetupContent(
     onRetry = viewModel::load,
     onSetUpChildDevice = onSetUpChildDevice,
     modifier = modifier,
+    initialDetailProfileId = initialDetailProfileId,
+    initialOpenSafetyFeed = initialOpenSafetyFeed,
   )
 }
 
@@ -59,6 +63,8 @@ internal fun GuardianChildProfileSetupContent(
   onRetry: () -> Unit,
   onSetUpChildDevice: (ChildProfileSummary) -> Unit,
   modifier: Modifier = Modifier,
+  initialDetailProfileId: String? = null,
+  initialOpenSafetyFeed: Boolean = false,
 ) {
   var addingChild by rememberSaveable { mutableStateOf(false) }
   CereveilScreen(modifier = modifier) {
@@ -91,6 +97,8 @@ internal fun GuardianChildProfileSetupContent(
             profiles = state.profiles,
             onSetUpChildDevice = onSetUpChildDevice,
             onAddChild = { addingChild = true },
+            initialDetailProfileId = initialDetailProfileId,
+            initialOpenSafetyFeed = initialOpenSafetyFeed,
           )
         }
       }
@@ -154,8 +162,10 @@ private fun ProfileList(
   profiles: List<ChildProfileSummary>,
   onSetUpChildDevice: (ChildProfileSummary) -> Unit,
   onAddChild: () -> Unit,
+  initialDetailProfileId: String? = null,
+  initialOpenSafetyFeed: Boolean = false,
 ) {
-  var detailProfileId by rememberSaveable { mutableStateOf<String?>(null) }
+  var detailProfileId by rememberSaveable(initialDetailProfileId) { mutableStateOf(initialDetailProfileId) }
   val detailProfile = profiles.firstOrNull { it.childProfileId == detailProfileId }
   if (detailProfile != null) {
     CereveilTitle("${detailProfile.displayName}’s device", connectivityDisplayName(detailProfile.connectivityStatus))
@@ -165,7 +175,10 @@ private fun ProfileList(
       Text("Unavailable: ${detailProfile.unavailableCapabilities.joinToString()}")
     }
     if (BuildConfig.DEBUG) GuardianPolicyContent(detailProfile.childProfileId)
-    GuardianLiveFeaturesContent(detailProfile.childProfileId)
+    GuardianLiveFeaturesContent(
+      detailProfile.childProfileId,
+      safetyAlertsFirst = initialOpenSafetyFeed && initialDetailProfileId == detailProfile.childProfileId,
+    )
     CereveilSecondaryButton(text = "Back to children", onClick = { detailProfileId = null })
     return
   }

@@ -68,7 +68,7 @@ data class ChildSupervisionPolicy(
       val value = Json.parseToJsonElement(raw).jsonObject
       val schemaVersion = value["schemaVersion"]?.jsonPrimitive?.content?.toIntOrNull()
         ?: error("Missing policy schema version")
-      require(schemaVersion == 2) { "Unsupported policy schema" }
+      require(schemaVersion in 2..3) { "Unsupported policy schema" }
       val safeBrowsing = value["safeBrowsing"]!!.jsonObject
       val safeBrowsingEnabled = safeBrowsing["enabled"]!!.jsonPrimitive.boolean
       val safeSearchEnabled = safeBrowsing["safeSearchEnabled"]!!.jsonPrimitive.boolean
@@ -101,7 +101,7 @@ data class ChildSupervisionPolicy(
           )
         },
         safeBrowsing = SafeBrowsingPolicy(safeBrowsingEnabled, safeSearchEnabled),
-        activeScreenSafety = ActiveScreenSafetyPolicy(value["activeScreenSafety"]!!.jsonObject["enabled"]!!.jsonPrimitive.boolean),
+        activeScreenSafety = parseActiveScreenSafety(value["activeScreenSafety"]!!.jsonObject, schemaVersion),
         locationSharing = LocationSharingPolicy(value["locationSharing"]!!.jsonObject["enabled"]!!.jsonPrimitive.boolean),
         screenTime = ScreenTimePolicy(value["screenTime"]!!.jsonObject["enabled"]!!.jsonPrimitive.boolean),
         rawJson = raw,
@@ -134,6 +134,41 @@ private fun ChildSupervisionPolicy.validate() {
       require(schedule.startMinute != schedule.endMinute)
     }
   }
+  listOf(activeScreenSafety.scamText, activeScreenSafety.nsfwScreen).forEach { detector ->
+    require(!detector.enabled || detector.monitoredPackageNames.isNotEmpty()) {
+      "Enabled safety detector requires a monitored app"
+    }
+    require(detector.monitoredPackageNames.size <= 100)
+    detector.monitoredPackageNames.forEach { packageName ->
+      require(packageName.matches(packagePattern) && packageName.length <= 255)
+      require(!packageName.startsWith("com.cereveil"))
+    }
+  }
+}
+
+private fun parseActiveScreenSafety(
+  section: kotlinx.serialization.json.JsonObject,
+  schemaVersion: Int,
+): ActiveScreenSafetyPolicy {
+  if (schemaVersion < 3 || section["scamText"] == null) return ActiveScreenSafetyPolicy(false)
+  fun detector(name: String): SafetyDetectorPolicy {
+    val value = section[name]!!.jsonObject
+    val packages = value["monitoredPackageNames"]!!.jsonArray
+      .map { it.jsonPrimitive.content }
+      .also { require(it.distinct().size == it.size) { "Duplicate monitored package" } }
+      .toSet()
+    return SafetyDetectorPolicy(
+      enabled = value["enabled"]!!.jsonPrimitive.boolean,
+      monitoredPackageNames = packages,
+      sensitivity = when (value["sensitivity"]!!.jsonPrimitive.content) {
+        "lower" -> SafetySensitivity.Lower
+        "standard" -> SafetySensitivity.Standard
+        "higher" -> SafetySensitivity.Higher
+        else -> error("Unknown safety sensitivity")
+      },
+    )
+  }
+  return ActiveScreenSafetyPolicy(detector("scamText"), detector("nsfwScreen"))
 }
 
 data class AppBlockingPolicy(val enabled: Boolean, val rules: List<AppBlockRule> = emptyList())
@@ -149,7 +184,23 @@ data class AppBlockSchedule(
   val endMinute: Int,
 )
 data class SafeBrowsingPolicy(val enabled: Boolean, val safeSearchEnabled: Boolean)
-data class ActiveScreenSafetyPolicy(val enabled: Boolean)
+enum class SafetySensitivity(val wireValue: String) {
+  Lower("lower"), Standard("standard"), Higher("higher")
+}
+data class SafetyDetectorPolicy(
+  val enabled: Boolean,
+  val monitoredPackageNames: Set<String>,
+  val sensitivity: SafetySensitivity,
+)
+data class ActiveScreenSafetyPolicy(
+  val scamText: SafetyDetectorPolicy,
+  val nsfwScreen: SafetyDetectorPolicy,
+) {
+  constructor(@Suppress("UNUSED_PARAMETER") legacyEnabled: Boolean) : this(
+    SafetyDetectorPolicy(false, emptySet(), SafetySensitivity.Standard),
+    SafetyDetectorPolicy(false, emptySet(), SafetySensitivity.Standard),
+  )
+}
 data class LocationSharingPolicy(val enabled: Boolean)
 data class ScreenTimePolicy(val enabled: Boolean)
 
@@ -170,6 +221,14 @@ data class ChildLocationMeasurement(
   val capturedAt: Long,
 )
 data class ChildScreenTimeRow(val packageName: String, val totalTimeInForegroundMs: Long)
+data class ChildSafetyAlert(
+  val incidentId: String,
+  val type: String,
+  val packageName: String,
+  val confidenceBand: String,
+  val policyVersion: Int,
+  val occurredAt: Long,
+)
 
 data class ChildCapabilities(
   val accessibilityService: Boolean,
@@ -257,6 +316,10 @@ interface ChildDeviceIdentityClient {
     appliedPolicyVersion: Int,
     blockKind: String,
     scheduledCoverageEnd: Long?,
+  ): ChildEnrollmentResult<Unit> = ChildEnrollmentResult.Failure(ChildEnrollmentError.NetworkUnavailable)
+  suspend fun uploadSafetyAlert(
+    accessJwt: String,
+    alert: ChildSafetyAlert,
   ): ChildEnrollmentResult<Unit> = ChildEnrollmentResult.Failure(ChildEnrollmentError.NetworkUnavailable)
   suspend fun createTokenChallenge(credentialId: String): ChildEnrollmentResult<String>
   suspend fun exchangeTokenChallenge(

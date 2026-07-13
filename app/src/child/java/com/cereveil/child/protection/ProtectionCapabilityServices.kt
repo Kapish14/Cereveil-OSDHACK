@@ -35,6 +35,7 @@ class CereveilAccessibilityService : AccessibilityService() {
   private var overlayPackage: String? = null
   private var askButton: Button? = null
   private val handler = Handler(Looper.getMainLooper())
+  private val safety by lazy { ActiveScreenSafetyController(this, scope, handler) }
   private val boundaryCheck = object : Runnable {
     override fun run() {
       evaluateVisibleApps(null)
@@ -47,6 +48,7 @@ class CereveilAccessibilityService : AccessibilityService() {
 
   override fun onAccessibilityEvent(event: AccessibilityEvent?) {
     evaluateVisibleApps(event?.packageName?.toString())
+    safety.onAccessibilityEvent(event)
   }
 
   private fun evaluateVisibleApps(eventPackage: String?) {
@@ -82,6 +84,7 @@ class CereveilAccessibilityService : AccessibilityService() {
     handler.removeCallbacks(boundaryCheck)
     if (instance === this) instance = null
     hideOverlay()
+    safety.clearAll()
     scope.cancel()
     super.onDestroy()
   }

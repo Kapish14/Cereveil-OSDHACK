@@ -17,7 +17,7 @@ A phone with an independently revocable Guardian Account session, with the same 
 _Avoid_: Parent phone, admin device
 
 **Guardian Notice**:
-A Safety Alert, Access Request, Tamper Alert, offline notice, or recovery notice delivered to every active Guardian Device on the Guardian Account.
+A Safety Alert, Access Request, Tamper Alert, offline notice, or recovery notice delivered to every active Guardian Device on the Guardian Account. Safety Alert notices use generic lock-screen text; detection type, app, time, and confidence band are revealed only inside authenticated Guardian Mode.
 _Avoid_: Parent-only notification, device-specific alert
 
 **Guardian Pairing Code**:
@@ -145,32 +145,48 @@ The Child-facing explanation shown over a blocked app, offering an Access Reques
 _Avoid_: Home redirect, error screen
 
 **Monitored App**:
-An app selected by the Guardian for active-screen safety analysis on the Child Device. In v1, one shared selection makes both Scam Text Detection and NSFW Screen Detection eligible while that app is visible.
+An app explicitly selected by package identity by the Guardian for Scam Text Detection, NSFW Screen Detection, or both; each detector has an independent selection and Cereveil never selects newly installed or suggested apps automatically. Analysis remains confined to content belonging to the selected app's window, including in split-screen or picture-in-picture. Each selection is retained while its detector is disabled, survives temporary absence from the App Catalog, and resumes when that detector is re-enabled or the app is reinstalled.
 _Avoid_: Tracked app, watched app
 
 **Scam Text Detection**:
-On-device classification of accessibility node text exposed by the active screen of a Monitored App, without OCR, notification inspection, or background message access.
+Android 8-or-newer on-device classification of visible, non-editable accessibility node text exposed by a Scam Monitored App, without attempting to infer whether the text was sent or received. Editable drafts, OCR, notification content, background message data, and model-specific fraud subcategories are excluded from Child and Guardian output.
 _Avoid_: Message interception, notification scanning
 
 **NSFW Screen Detection**:
-On-device classification of temporary active-window screenshots captured while a Monitored App is visible; captured pixels are not retained or uploaded.
+Android 11-or-newer on-device classification of temporary active-window screenshots captured while an unlocked Child Device displays an NSFW Monitored App; captured pixels are not retained or uploaded. Detection stops when the screen turns off, the device locks, the monitored window disappears, or NSFW Screen Detection is disabled.
 _Avoid_: Gallery scanning, image interception
 
-**Safety Warning**:
-An immediate Child-facing intervention produced by a positive AI detection: a warning overlay for Scam Text Detection or content blurring plus a warning for NSFW Screen Detection.
+**Detection Sensitivity**:
+A Guardian-selected `Lower`, `Standard`, or `Higher` willingness to warn for a positive detection, configured independently for Scam Text Detection and NSFW Screen Detection and applied across all Monitored Apps. `Standard` is the default; the levels do not expose or preserve model-specific probability thresholds.
+_Avoid_: Raw confidence threshold, per-app sensitivity
+
+**Safety Intervention**:
+The immediate Child-facing response to a positive safety detection: a Safety Warning for Scam Text Detection or an NSFW Blur for NSFW Screen Detection.
 _Avoid_: Block Screen, punishment
 
+**Safety Warning**:
+A dismissible scam-specific explanation shown without raw message text or raw confidence after Scam Text Detection; it disappears automatically after 15 seconds if the Child does not dismiss it.
+_Avoid_: NSFW warning, message preview, Block Screen
+
+**NSFW Blur**:
+A non-dismissible visual cover confined to detected NSFW content in a Monitored App. It remains while that content is visible and disappears when the content is replaced, the monitored window leaves, or a safe recheck confirms replacement content; NSFW Screen Detection shows no additional warning, banner, dialog, or toast.
+_Avoid_: Safety Warning, blur snooze, false-positive bypass
+
 **Safety Incident**:
-A unique detected item that produces one Safety Warning and one Safety Alert; repeated inference of the same item is suppressed for 10 minutes using a short-lived on-device fingerprint.
+A unique detected item that produces one Safety Intervention and one Safety Alert; repeated inference of the same item is suppressed for 10 minutes using a memory-only on-device fingerprint that is cleared on process death, restart, Active Screen Safety disablement, or End Supervision.
 _Avoid_: Model inference, repeated alert
 
 **Safety Alert**:
-A metadata-only Guardian-facing notification emitted at the same time as a Safety Warning, containing the Child, detection type, app, timestamp, and confidence band but no raw text or captured pixels.
+A metadata-only Guardian-facing record created at the same time as a Safety Intervention, containing the Child, detection type, app, timestamp, and confidence band but no raw text or captured pixels. A novel alert remains available to the Guardian even when its immediate Guardian Notice is suppressed by a Guardian Notification Cooldown; it cannot be manually deleted or exported and expires automatically after one week.
 _Avoid_: Surveillance log, raw-content report
 
-**Safety Incident Summary**:
-A weekly Guardian-facing aggregate of recent Safety Alerts for a Child, containing counts and broad patterns without raw content, individual incident details, or a long-term history.
-_Avoid_: Safety log, monthly dossier, incident archive
+**Pending Safety Alert**:
+A metadata-only Safety Alert awaiting upload while the Child Device is offline. It is retained on that device for at most seven days, contains no raw content or fingerprint, and produces an immediate Guardian Notice after upload only when it arrives within five minutes of detection.
+_Avoid_: Offline content archive, delayed live alert
+
+**Guardian Notification Cooldown**:
+A backend-authoritative, fixed, non-sliding two-minute period keyed by Child Profile and detection type after an immediate Safety Alert Guardian Notice, during which further novel matching alerts are retained without another immediate notice. It is shared by all Guardian Devices, does not cross between Children or detection types, does not suppress Child-facing Safety Interventions, and produces no delayed notice merely by expiring.
+_Avoid_: Safety Incident suppression, detection pause
 
 **Household**:
 The Cereveil supervision relationship owned by exactly one Guardian Account and containing one or more Children.

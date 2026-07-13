@@ -8,7 +8,7 @@ import { throwAppError } from "../../lib/errors";
 import { guardianMutation, guardianQuery } from "../../lib/functionWrappers";
 import { now } from "../../lib/time";
 
-const POLICY_SCHEMA_VERSION = 2;
+const ACTIVE_SCREEN_SAFETY_SCHEMA_VERSION = 3;
 const COMMAND_LIFETIME_MS = 7 * 24 * 60 * 60 * 1000;
 
 const updateArgs = {
@@ -28,6 +28,12 @@ const appBlockRuleValidator = v.object({
   packageName: v.string(),
   manualBlocked: v.boolean(),
   schedules: v.array(scheduleValidator),
+});
+
+const safetyDetectorValidator = v.object({
+  enabled: v.boolean(),
+  monitoredPackageNames: v.array(v.string()),
+  sensitivity: v.union(v.literal("lower"), v.literal("standard"), v.literal("higher")),
 });
 
 export const getPolicyState = guardianQuery({
@@ -101,10 +107,10 @@ export const updateScreenTime = guardianMutation({
 
 export const updateActiveScreenSafety = guardianMutation({
   operation: "policies.updateActiveScreenSafety",
-  args: { ...updateArgs, enabled: v.boolean() },
+  args: { ...updateArgs, scamText: safetyDetectorValidator, nsfwScreen: safetyDetectorValidator },
   handler: async (ctx, actor, args) => await updatePolicy(ctx, actor, args, {
     kind: "active_screen_safety",
-    value: { enabled: args.enabled },
+    value: { scamText: args.scamText, nsfwScreen: args.nsfwScreen },
   }),
 });
 
@@ -114,7 +120,18 @@ type PolicyChange =
   | { kind: "app_blocking"; value: { enabled: boolean } }
   | { kind: "app_blocking_rules"; value: { rules: AppBlockRule[] } }
   | { kind: "location_sharing"; value: { enabled: boolean } }
-  | { kind: "active_screen_safety"; value: { enabled: boolean } };
+  | { kind: "active_screen_safety"; value: ActiveScreenSafetyV3 };
+
+type SafetySensitivity = "lower" | "standard" | "higher";
+type SafetyDetectorPolicy = {
+  enabled: boolean;
+  monitoredPackageNames: string[];
+  sensitivity: SafetySensitivity;
+};
+type ActiveScreenSafetyV3 = {
+  scamText: SafetyDetectorPolicy;
+  nsfwScreen: SafetyDetectorPolicy;
+};
 
 type AppBlockRule = {
   packageName: string;
@@ -154,11 +171,20 @@ async function updatePolicy(
 
   const enrollment = await activeEnrollment(ctx, args.childProfileId);
   if (enrollment === null) throwAppError("VALIDATION_FAILED");
-  if (enrollment.supportedPolicySchemaVersion < POLICY_SCHEMA_VERSION) {
-    throwAppError("POLICY_UNSUPPORTED");
-  }
   const current = await currentPolicy(ctx, args.childProfileId);
   if (current.version !== args.expectedCurrentVersion) throwAppError("POLICY_CONFLICT");
+  const nextSchemaVersion = change.kind === "active_screen_safety"
+    ? ACTIVE_SCREEN_SAFETY_SCHEMA_VERSION
+    : current.schemaVersion;
+  if (enrollment.supportedPolicySchemaVersion < nextSchemaVersion) {
+    throwAppError("POLICY_UNSUPPORTED");
+  }
+  if (change.kind === "active_screen_safety") {
+    if (change.value.nsfwScreen.enabled && enrollment.supportsNsfwScreenDetection === false) {
+      throwAppError("POLICY_UNSUPPORTED");
+    }
+    await validateActiveScreenSafety(ctx, enrollment._id, current.activeScreenSafety, change.value);
+  }
 
   const next = {
     appBlocking: change.kind === "app_blocking"
@@ -205,7 +231,7 @@ async function updatePolicy(
     householdId: actor.householdId,
     childProfileId: args.childProfileId,
     version: nextVersion,
-    schemaVersion: POLICY_SCHEMA_VERSION,
+    schemaVersion: nextSchemaVersion,
     status: "active",
     ...next,
     createdByGuardianAccountId: actor.guardianAccountId,
@@ -266,6 +292,46 @@ async function updatePolicy(
     attempt: 1,
   });
   return await loadGuardianPolicyState(ctx, args.childProfileId);
+}
+
+async function validateActiveScreenSafety(
+  ctx: MutationCtx,
+  activeEnrollmentId: Id<"activeEnrollments">,
+  current: { enabled: boolean } | ActiveScreenSafetyV3,
+  next: ActiveScreenSafetyV3,
+) {
+  const currentSelections = "scamText" in current
+    ? new Set([...current.scamText.monitoredPackageNames, ...current.nsfwScreen.monitoredPackageNames])
+    : new Set<string>();
+  const currentGeneration = await ctx.db
+    .query("appCatalogGenerations")
+    .withIndex("by_active_enrollment_id_and_status", (q) =>
+      q.eq("activeEnrollmentId", activeEnrollmentId).eq("status", "current"),
+    )
+    .unique();
+  const catalogEntries = currentGeneration === null ? [] : await ctx.db
+    .query("appCatalogEntries")
+    .withIndex("by_app_catalog_generation_id", (q) =>
+      q.eq("appCatalogGenerationId", currentGeneration._id),
+    )
+    .take(501);
+  if (catalogEntries.length > 500) throwAppError("INTERNAL_ERROR");
+  const allowed = new Set([...catalogEntries.map((entry) => entry.packageName), ...currentSelections]);
+  const packagePattern = /^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)+$/;
+  for (const detector of [next.scamText, next.nsfwScreen]) {
+    if (detector.enabled && detector.monitoredPackageNames.length === 0) throwAppError("VALIDATION_FAILED");
+    if (detector.monitoredPackageNames.length > 100) throwAppError("VALIDATION_FAILED");
+    const unique = new Set(detector.monitoredPackageNames);
+    if (unique.size !== detector.monitoredPackageNames.length) throwAppError("VALIDATION_FAILED");
+    for (const packageName of unique) {
+      if (
+        !packagePattern.test(packageName) ||
+        packageName.length > 255 ||
+        packageName.startsWith("com.cereveil") ||
+        !allowed.has(packageName)
+      ) throwAppError("VALIDATION_FAILED");
+    }
+  }
 }
 
 function validateAppBlockRules(rules: AppBlockRule[]) {
@@ -405,6 +471,7 @@ async function loadGuardianPolicyState(ctx: QueryCtx | MutationCtx, childProfile
     applicationStatus: applicationState.status,
     failureReason: applicationState.failureReason ?? null,
     supportedPolicySchemaVersion: enrollment.supportedPolicySchemaVersion,
+    supportsNsfwScreenDetection: enrollment.supportsNsfwScreenDetection ?? false,
   };
 }
 
@@ -449,8 +516,18 @@ function publicPolicy(policy: Awaited<ReturnType<typeof currentPolicy>>) {
     schemaVersion: policy.schemaVersion,
     appBlocking: { ...policy.appBlocking, rules: policy.appBlocking.rules ?? [] },
     safeBrowsing: policy.safeBrowsing,
-    activeScreenSafety: policy.activeScreenSafety,
+    activeScreenSafety: normalizeActiveScreenSafety(policy.activeScreenSafety),
     locationSharing: policy.locationSharing ?? { enabled: false },
     screenTime: policy.screenTime ?? { enabled: policy.screenTimeSummariesEnabled ?? false },
+  };
+}
+
+function normalizeActiveScreenSafety(
+  value: { enabled: boolean } | ActiveScreenSafetyV3,
+): ActiveScreenSafetyV3 {
+  if ("scamText" in value) return value;
+  return {
+    scamText: { enabled: false, monitoredPackageNames: [], sensitivity: "standard" },
+    nsfwScreen: { enabled: false, monitoredPackageNames: [], sensitivity: "standard" },
   };
 }

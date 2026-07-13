@@ -100,7 +100,7 @@ export const getDeliveryTargets = internalQuery({
       }
       return {
         category: "guardian_notice" as const,
-        priority: notice.type === "tamper" || notice.type === "access_request"
+        priority: notice.type === "tamper" || notice.type === "access_request" || notice.type === "safety"
           ? "high" as const
           : "normal" as const,
         targets,

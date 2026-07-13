@@ -122,6 +122,23 @@ class ChildEnrollmentCoordinatorTest {
   }
 
   @Test
+  fun schemaV3ParserPreservesIndependentSafetySectionsAndRejectsEmptyEnabledSelection() {
+    val raw = """{"version":2,"schemaVersion":3,"appBlocking":{"enabled":false,"rules":[]},"safeBrowsing":{"enabled":false,"safeSearchEnabled":false},"activeScreenSafety":{"scamText":{"enabled":true,"monitoredPackageNames":["com.example.messages"],"sensitivity":"higher"},"nsfwScreen":{"enabled":false,"monitoredPackageNames":["com.example.browser"],"sensitivity":"lower"}},"locationSharing":{"enabled":false},"screenTime":{"enabled":false}}"""
+
+    val policy = ChildSupervisionPolicy.parse(raw)
+
+    assertEquals(setOf("com.example.messages"), policy.activeScreenSafety.scamText.monitoredPackageNames)
+    assertEquals(SafetySensitivity.Higher, policy.activeScreenSafety.scamText.sensitivity)
+    assertEquals(setOf("com.example.browser"), policy.activeScreenSafety.nsfwScreen.monitoredPackageNames)
+    assertTrue(runCatching {
+      ChildSupervisionPolicy.parse(raw.replace(
+        "\"monitoredPackageNames\":[\"com.example.messages\"]",
+        "\"monitoredPackageNames\":[]",
+      ))
+    }.isFailure)
+  }
+
+  @Test
   fun heartbeatFailureDoesNotUndoLocalPolicyApplication() = runTest {
     val harness = Harness().apply { client.heartbeatFails = true }
 

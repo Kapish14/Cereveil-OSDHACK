@@ -2,6 +2,7 @@ package com.cereveil.child.enrollment
 
 import java.net.HttpURLConnection
 import java.net.URL
+import android.os.Build
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
@@ -38,7 +39,8 @@ class HttpChildDeviceIdentityClient(convexSiteUrl: String) : ChildDeviceIdentity
     put("installationId", installationId)
     deviceLabel?.let { put("deviceLabel", it) }
     put("appBuild", appBuild)
-    put("supportedPolicySchemaVersion", 2)
+    put("supportedPolicySchemaVersion", 3)
+    put("supportsNsfwScreenDetection", Build.VERSION.SDK_INT >= Build.VERSION_CODES.R)
   }).map { value ->
     ChildEnrollmentCompletion(
       childDeviceId = value.string("childDeviceId"),
@@ -69,7 +71,8 @@ class HttpChildDeviceIdentityClient(convexSiteUrl: String) : ChildDeviceIdentity
 
   override suspend fun heartbeat(accessJwt: String, capabilities: ChildCapabilities) =
     request("/child/heartbeat", accessJwt, buildJsonObject {
-      put("supportedPolicySchemaVersion", 2)
+      put("supportedPolicySchemaVersion", 3)
+      put("supportsNsfwScreenDetection", Build.VERSION.SDK_INT >= Build.VERSION_CODES.R)
       put("capabilities", buildJsonObject {
         put("accessibilityService", capabilities.accessibilityService)
         put("usageAccess", capabilities.usageAccess)
@@ -211,6 +214,16 @@ class HttpChildDeviceIdentityClient(convexSiteUrl: String) : ChildDeviceIdentity
     put("blockKind", blockKind)
     scheduledCoverageEnd?.let { put("scheduledCoverageEnd", it) }
   }).unit()
+
+  override suspend fun uploadSafetyAlert(accessJwt: String, alert: ChildSafetyAlert) =
+    request("/child/safety-alerts", accessJwt, buildJsonObject {
+      put("incidentId", alert.incidentId)
+      put("type", alert.type)
+      put("packageName", alert.packageName)
+      put("confidenceBand", alert.confidenceBand)
+      put("policyVersion", alert.policyVersion)
+      put("occurredAt", alert.occurredAt)
+    }).unit()
 
   override suspend fun createTokenChallenge(credentialId: String) =
     request("/device-identity/token/challenge", body = buildJsonObject { put("credentialId", credentialId) })

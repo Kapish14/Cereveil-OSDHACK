@@ -1,0 +1,10 @@
+{
+  "0": "legitimate",
+  "1": "non_financial_spam",
+  "2": "banking_phishing",
+  "3": "upi_payment_fraud",
+  "4": "otp_credential_theft",
+  "5": "kyc_identity_scam",
+  "6": "investment_scam",
+  "7": "loan_extortion"
+}

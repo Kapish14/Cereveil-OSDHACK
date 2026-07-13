@@ -1,0 +1,3 @@
+# Keep Active Screen Safety development-only until Play compliant
+
+Phase 9 will implement Active Screen Safety only for sideloaded development Child builds and will prevent release builds from enabling it. No build containing an enabled Active Screen Safety feature may enter any Google Play track until Cereveil implements and verifies the `isMonitoringTool=child_monitoring` declaration, prominent disclosure and affirmative consent, persistent monitoring notification, Play listing disclosure, permissions declaration, and Data Safety reporting. Deferring this release work does not relax the on-device processing, metadata-only upload, visible Child intervention, or other privacy boundaries in the development implementation.

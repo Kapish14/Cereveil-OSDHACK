@@ -69,6 +69,9 @@ private class FakePolicyClient(initial: GuardianPolicyState) : GuardianPolicyCli
     tryEmit(GuardianPolicyResult.Success(initial))
   }
   override fun observe(childProfileId: String) = states
+  override fun observeCatalog(childProfileId: String) = MutableSharedFlow<GuardianPolicyResult<List<GuardianSelectableApp>>>(replay = 1).apply {
+    tryEmit(GuardianPolicyResult.Success(emptyList()))
+  }
   override suspend fun update(
     childProfileId: String,
     expectedVersion: Int,
@@ -81,11 +84,34 @@ private class FakePolicyClient(initial: GuardianPolicyState) : GuardianPolicyCli
     val desired = current.desired.copy(screenTimeEnabled = enabled, version = current.desired.version + 1)
     return GuardianPolicyResult.Success(current.copy(desired = desired, status = PolicyApplicationStatus.Pending))
   }
+  override suspend fun updateSafety(
+    childProfileId: String,
+    expectedVersion: Int,
+    operationId: String,
+    scamText: GuardianSafetyDetectorPolicy,
+    nsfwScreen: GuardianSafetyDetectorPolicy,
+  ): GuardianPolicyResult<GuardianPolicyState> {
+    val current = (states.replayCache.single() as GuardianPolicyResult.Success).value
+    return GuardianPolicyResult.Success(current.copy(desired = current.desired.copy(
+      version = current.desired.version + 1,
+      schemaVersion = 3,
+      scamTextSafety = scamText,
+      nsfwScreenSafety = nsfwScreen,
+    ), status = PolicyApplicationStatus.Pending))
+  }
 }
 
 private fun policyState(applied: Boolean, desired: Boolean): GuardianPolicyState {
   fun policy(version: Int, screenTime: Boolean) = GuardianPolicy(
-    version, 2, false, false, false, false, false, screenTime,
+    version = version,
+    schemaVersion = 2,
+    appBlockingEnabled = false,
+    safeBrowsingEnabled = false,
+    safeSearchEnabled = false,
+    scamTextSafety = GuardianSafetyDetectorPolicy(false, emptySet(), GuardianSafetySensitivity.Standard),
+    nsfwScreenSafety = GuardianSafetyDetectorPolicy(false, emptySet(), GuardianSafetySensitivity.Standard),
+    locationSharingEnabled = false,
+    screenTimeEnabled = screenTime,
   )
   return GuardianPolicyState(
     desired = policy(if (desired == applied) 1 else 2, desired),

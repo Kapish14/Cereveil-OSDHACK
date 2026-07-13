@@ -330,7 +330,7 @@ Special files:
 
 ### `modules/safety`
 
-Owns Safety Alerts and weekly Safety Incident Summaries.
+Owns metadata-only Safety Alerts, Guardian Notification Cooldowns, and one-week alert cleanup.
 
 ### `modules/accessRequests`
 

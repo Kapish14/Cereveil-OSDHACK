@@ -1,0 +1,3 @@
+# Intervene for the Child and alert the Guardian together
+
+Every novel positive AI safety detection will simultaneously create a Child-facing Safety Intervention and a metadata-only Guardian-facing Safety Alert. Scam Text Detection uses a dismissible warning overlay that expires after 15 seconds, while NSFW Screen Detection uses only a non-dismissible real-time blur over the detected content and shows no warning, banner, dialog, or toast. Immediate Guardian Notices are independently rate-limited by detection type using fixed, non-sliding two-minute cooldowns, but those cooldowns do not suppress the Child intervention or Safety Alert record and do not produce delayed notices merely by expiring.

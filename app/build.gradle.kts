@@ -153,4 +153,5 @@ dependencies {
   implementation(project(":core:network"))
   add("guardianImplementation", project(":feature:guardian"))
   add("childImplementation", project(":feature:child"))
+  add("childImplementation", project(":feature:child:ml"))
 }

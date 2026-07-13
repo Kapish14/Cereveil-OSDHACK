@@ -12,6 +12,8 @@ import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import com.cereveil.BuildConfig
 import com.cereveil.child.protection.ChildAccessGrantStore
+import com.cereveil.child.protection.ChildSafetyAlertReporter
+import com.cereveil.child.protection.ChildSafetyModels
 import java.util.concurrent.TimeUnit
 
 interface ChildFeatureCommandProcessor {
@@ -55,6 +57,9 @@ class ChildSupervisionWorker(context: Context, parameters: WorkerParameters) :
       runtime = AndroidPolicyControlledRuntime(applicationContext),
       featureProcessor = AndroidChildFeatureCommandProcessor(applicationContext, client),
     ).sync()
+    if (outcome != ChildSupervisionSyncOutcome.Stop) {
+      ChildSafetyAlertReporter(applicationContext).flush()
+    }
     return when (outcome) {
       ChildSupervisionSyncOutcome.Complete -> Result.success()
       ChildSupervisionSyncOutcome.Stop -> {
@@ -62,7 +67,9 @@ class ChildSupervisionWorker(context: Context, parameters: WorkerParameters) :
           WorkManager.getInstance(applicationContext).cancelUniqueWork("child-supervision-$it")
         }
         ChildAccessGrantStore(applicationContext).clear()
+        ChildSafetyAlertReporter(applicationContext).clear()
         ChildLocationMovementRegistration.configure(applicationContext, false)
+        ChildSafetyModels.release()
         Result.success()
       }
       ChildSupervisionSyncOutcome.Retry -> Result.retry()

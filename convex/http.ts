@@ -111,6 +111,33 @@ http.route({
 });
 
 http.route({
+  path: "/child/safety-alerts",
+  method: "POST",
+  handler: childDeviceHttpAction({
+    operation: "child.safetyAlerts.create",
+    logSuccess: false,
+    handler: async (ctx, actor, request) => {
+      const body = await parseJson(request);
+      const incidentId = stringField(body, "incidentId");
+      const type = stringField(body, "type");
+      const packageName = stringField(body, "packageName");
+      const confidenceBand = stringField(body, "confidenceBand");
+      const policyVersion = numberField(body, "policyVersion");
+      const occurredAt = numberField(body, "occurredAt");
+      if (
+        incidentId === null || packageName === null || policyVersion === null || occurredAt === null ||
+        (type !== "scam_text" && type !== "nsfw_screen") ||
+        (confidenceBand !== "low" && confidenceBand !== "medium" && confidenceBand !== "high")
+      ) throwAppError("VALIDATION_FAILED");
+      return await ctx.runMutation(internal.modules.safetyAlerts.internal.createSafetyAlert, {
+        actor,
+        input: { incidentId, type, packageName, confidenceBand, policyVersion, occurredAt, serverNow: Date.now() },
+      });
+    },
+  }),
+});
+
+http.route({
   path: "/child/app-catalog/generations/start",
   method: "POST",
   handler: childDeviceHttpAction({
@@ -382,13 +409,17 @@ http.route({
     handler: async (ctx, actor, request) => {
       const body = await parseJson(request);
       const supportedPolicySchemaVersion = numberField(body, "supportedPolicySchemaVersion");
+      const supportsNsfwValue = body?.supportsNsfwScreenDetection;
+      const supportsNsfwScreenDetection = typeof supportsNsfwValue === "boolean"
+        ? supportsNsfwValue
+        : (supportedPolicySchemaVersion ?? 0) >= 3;
       const capabilities = supportedPolicySchemaVersion === null
         ? null
         : capabilitiesField(body, supportedPolicySchemaVersion);
       if (capabilities === null || supportedPolicySchemaVersion === null) throwAppError("VALIDATION_FAILED");
       return await ctx.runMutation(internal.modules.deviceIdentity.internal.recordHeartbeat, {
         actor,
-        input: { capabilities, supportedPolicySchemaVersion, serverNow: Date.now() },
+        input: { capabilities, supportedPolicySchemaVersion, supportsNsfwScreenDetection, serverNow: Date.now() },
       });
     },
   }),
@@ -494,6 +525,10 @@ http.route({
     const installationId = stringField(body, "installationId");
     const appBuild = stringField(body, "appBuild");
     const supportedPolicySchemaVersion = numberField(body, "supportedPolicySchemaVersion");
+    const supportsNsfwScreenDetectionValue = body?.supportsNsfwScreenDetection;
+    const supportsNsfwScreenDetection = typeof supportsNsfwScreenDetectionValue === "boolean"
+      ? supportsNsfwScreenDetectionValue
+      : (supportedPolicySchemaVersion ?? 0) >= 3;
     const deviceLabel = optionalStringField(body, "deviceLabel");
     if (
       code === null ||
@@ -526,6 +561,7 @@ http.route({
       ...(deviceLabel === undefined ? {} : { deviceLabel }),
       appBuild,
       supportedPolicySchemaVersion,
+      supportsNsfwScreenDetection,
       serverNow,
     });
     if (result.kind === "invalid_code") return invalidCodeResponse();

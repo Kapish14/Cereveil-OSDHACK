@@ -1,13 +1,16 @@
 package com.cereveil.guardian.messaging
 
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import com.cereveil.BuildConfig
+import com.cereveil.MainActivity
 import com.cereveil.RoleInitializer
 import com.cereveil.guardian.auth.SharedPreferencesGuardianInstallationIdProvider
 import com.google.firebase.messaging.FirebaseMessagingService
@@ -99,7 +102,7 @@ class GuardianNoticeReconciler(private val context: Context) {
         put("guardianInstallationId", installationId)
         put("paginationOpts", buildJsonObject {
           put("numItems", 50)
-          if (cursor == null) put("cursor", kotlinx.serialization.json.JsonNull) else put("cursor", cursor!!)
+          cursor?.let { put("cursor", it) } ?: put("cursor", kotlinx.serialization.json.JsonNull)
         })
       }) ?: return
       val value = page["value"]?.jsonObject ?: return
@@ -151,7 +154,14 @@ class GuardianNoticeReconciler(private val context: Context) {
       "offline" -> "A Child Device is offline. Open Cereveil for current details."
       "recovery" -> "A Child Device is online again. Open Cereveil for current details."
       "tamper" -> "Protection needs attention. Open Cereveil for current details."
+      "safety" -> "A new safety alert is available. Open Cereveil to review it."
       else -> "New supervision information is available."
+    }
+    val destination = Intent(context, MainActivity::class.java)
+    if (notice.string("type") == "safety") {
+      destination
+        .putExtra("open_safety_feed", true)
+        .putExtra("safety_child_profile_id", notice.string("childProfileId"))
     }
     val notification = NotificationCompat.Builder(context, CHANNEL_ID)
       .setSmallIcon(com.cereveil.R.mipmap.ic_launcher)
@@ -159,6 +169,12 @@ class GuardianNoticeReconciler(private val context: Context) {
       .setContentText(text)
       .setAutoCancel(true)
       .setOnlyAlertOnce(true)
+      .setContentIntent(PendingIntent.getActivity(
+        context,
+        receiptId.hashCode(),
+        destination,
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+      ))
       .build()
     NotificationManagerCompat.from(context).notify(receiptId.hashCode(), notification)
   }

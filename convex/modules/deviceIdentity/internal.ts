@@ -50,6 +50,7 @@ export const completeEnrollment = internalMutation({
     deviceLabel: v.optional(v.string()),
     appBuild: v.string(),
     supportedPolicySchemaVersion: v.number(),
+    supportsNsfwScreenDetection: v.boolean(),
     serverNow: v.number(),
   },
   handler: async (ctx, args) => {
@@ -122,6 +123,7 @@ export const completeEnrollment = internalMutation({
       status: "active",
       roleLockActive: true,
       supportedPolicySchemaVersion: args.supportedPolicySchemaVersion,
+      supportsNsfwScreenDetection: args.supportsNsfwScreenDetection,
       enrolledAt: args.serverNow,
       createdAt: args.serverNow,
       updatedAt: args.serverNow,
@@ -249,6 +251,7 @@ export const recordHeartbeat = internalMutation({
     input: v.object({
       capabilities: capabilitiesValidator,
       supportedPolicySchemaVersion: v.number(),
+      supportsNsfwScreenDetection: v.boolean(),
       serverNow: v.number(),
     }),
   },
@@ -265,9 +268,13 @@ export const recordHeartbeat = internalMutation({
       !Number.isInteger(args.input.supportedPolicySchemaVersion) ||
       args.input.supportedPolicySchemaVersion < 1
     ) throwAppError("VALIDATION_FAILED");
-    if (actor.enrollment.supportedPolicySchemaVersion !== args.input.supportedPolicySchemaVersion) {
+    if (
+      actor.enrollment.supportedPolicySchemaVersion !== args.input.supportedPolicySchemaVersion ||
+      actor.enrollment.supportsNsfwScreenDetection !== args.input.supportsNsfwScreenDetection
+    ) {
       await ctx.db.patch("activeEnrollments", actor.enrollment._id, {
         supportedPolicySchemaVersion: args.input.supportedPolicySchemaVersion,
+        supportsNsfwScreenDetection: args.input.supportsNsfwScreenDetection,
         updatedAt: args.input.serverNow,
       });
     }

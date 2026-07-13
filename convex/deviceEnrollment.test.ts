@@ -566,11 +566,19 @@ describe("Enrolled Child Device APIs", () => {
   });
 
   test("preserves unrelated sections across successive feature changes", async () => {
-    const enrolled = await enrolledChild();
+    const enrolled = await enrolledChild(3);
     const base = {
       guardianInstallationId: bootstrapArgs.guardianInstallationId,
       childProfileId: enrolled.child.childProfileId,
     };
+    const catalog = await childRequest(enrolled.t, "/child/app-catalog/generations/start", enrolled.body.accessJwt, {
+      expectedCount: 1,
+    });
+    const generationId = (await catalog.json()).generationId;
+    await childRequest(enrolled.t, "/child/app-catalog/generations/batch", enrolled.body.accessJwt, {
+      generationId, apps: [{ packageName: "com.example.messages", label: "Messages" }],
+    });
+    await childRequest(enrolled.t, "/child/app-catalog/generations/complete", enrolled.body.accessJwt, { generationId });
     await enrolled.t.withIdentity(identity).mutation(updateSafeBrowsing, {
       ...base,
       expectedCurrentVersion: 1,
@@ -588,13 +596,21 @@ describe("Enrolled Child Device APIs", () => {
       ...base,
       expectedCurrentVersion: 3,
       operationId: "018f-policy-screen-safety-0001",
-      enabled: true,
+      scamText: {
+        enabled: true,
+        monitoredPackageNames: ["com.example.messages"],
+        sensitivity: "standard",
+      },
+      nsfwScreen: { enabled: false, monitoredPackageNames: [], sensitivity: "standard" },
     });
     expect(result.desiredPolicy).toMatchObject({
       version: 4,
       safeBrowsing: { enabled: true, safeSearchEnabled: true },
       appBlocking: { enabled: true },
-      activeScreenSafety: { enabled: true },
+      activeScreenSafety: {
+        scamText: { enabled: true, monitoredPackageNames: ["com.example.messages"] },
+        nsfwScreen: { enabled: false, monitoredPackageNames: [] },
+      },
     });
     const commands = await enrolled.t.run(async (ctx: MutationCtx) =>
       await ctx.db.query("childDeviceCommands").collect(),
@@ -864,6 +880,204 @@ describe("Latest App Catalog", () => {
       { packageName: "com.example.reader", label: "Reader" },
     ]);
     expect(catalog.syncedAt).toEqual(expect.any(Number));
+  });
+});
+
+describe("Active Screen Safety policy schema v3", () => {
+  beforeEach(() => {
+    process.env.CHILD_DEVICE_JWT_SECRET = "test-only-child-jwt-secret-with-at-least-32-bytes";
+  });
+
+  test("applies independent monitored apps and sensitivities as one complete policy", async () => {
+    const enrolled = await enrolledChild(3);
+    await childRequest(enrolled.t, "/child/policy/acknowledge", enrolled.body.accessJwt, {
+      appliedPolicyVersion: 1,
+    });
+    const started = await childRequest(
+      enrolled.t,
+      "/child/app-catalog/generations/start",
+      enrolled.body.accessJwt,
+      { expectedCount: 2 },
+    );
+    const { generationId } = await started.json() as { generationId: string };
+    await childRequest(enrolled.t, "/child/app-catalog/generations/batch", enrolled.body.accessJwt, {
+      generationId,
+      apps: [
+        { packageName: "com.example.messages", label: "Messages" },
+        { packageName: "com.example.browser", label: "Browser" },
+      ],
+    });
+    await childRequest(enrolled.t, "/child/app-catalog/generations/complete", enrolled.body.accessJwt, {
+      generationId,
+    });
+
+    const changed = await enrolled.t.withIdentity(identity).mutation(updateActiveScreenSafety, {
+      guardianInstallationId: bootstrapArgs.guardianInstallationId,
+      childProfileId: enrolled.child.childProfileId,
+      expectedCurrentVersion: 1,
+      operationId: "active-screen-safety-v3-0001",
+      scamText: {
+        enabled: true,
+        monitoredPackageNames: ["com.example.messages"],
+        sensitivity: "standard",
+      },
+      nsfwScreen: {
+        enabled: true,
+        monitoredPackageNames: ["com.example.browser"],
+        sensitivity: "higher",
+      },
+    });
+
+    expect(changed).toMatchObject({
+      applicationStatus: "pending",
+      desiredPolicy: {
+        version: 2,
+        schemaVersion: 3,
+        activeScreenSafety: {
+          scamText: {
+            enabled: true,
+            monitoredPackageNames: ["com.example.messages"],
+            sensitivity: "standard",
+          },
+          nsfwScreen: {
+            enabled: true,
+            monitoredPackageNames: ["com.example.browser"],
+            sensitivity: "higher",
+          },
+        },
+      },
+      appliedPolicy: {
+        version: 1,
+        activeScreenSafety: {
+          scamText: { enabled: false, monitoredPackageNames: [], sensitivity: "standard" },
+          nsfwScreen: { enabled: false, monitoredPackageNames: [], sensitivity: "standard" },
+        },
+      },
+    });
+  });
+
+  test("stores one metadata-only Child incident in the authenticated Guardian feed", async () => {
+    const enrolled = await enrolledChild(3);
+    await enrolled.t.withIdentity(identity).mutation(bootstrapGuardian, {
+      ...bootstrapArgs,
+      guardianInstallationId: "018f2e36-3d2c-78d8-b7bd-847f0f563333",
+      deviceLabel: "Pixel Tablet",
+    });
+    const guardianArgs = {
+      guardianInstallationId: bootstrapArgs.guardianInstallationId,
+      childProfileId: enrolled.child.childProfileId,
+    };
+    await childRequest(enrolled.t, "/child/policy/acknowledge", enrolled.body.accessJwt, {
+      appliedPolicyVersion: 1,
+    });
+    const started = await childRequest(enrolled.t, "/child/app-catalog/generations/start", enrolled.body.accessJwt, {
+      expectedCount: 1,
+    });
+    const generationId = (await started.json()).generationId;
+    await childRequest(enrolled.t, "/child/app-catalog/generations/batch", enrolled.body.accessJwt, {
+      generationId, apps: [{ packageName: "com.example.messages", label: "Messages" }],
+    });
+    await childRequest(enrolled.t, "/child/app-catalog/generations/complete", enrolled.body.accessJwt, { generationId });
+    await enrolled.t.withIdentity(identity).mutation(updateActiveScreenSafety, {
+      ...guardianArgs,
+      expectedCurrentVersion: 1,
+      operationId: "active-screen-safety-alert-0001",
+      scamText: {
+        enabled: true,
+        monitoredPackageNames: ["com.example.messages"],
+        sensitivity: "standard",
+      },
+      nsfwScreen: {
+        enabled: true,
+        monitoredPackageNames: ["com.example.messages"],
+        sensitivity: "standard",
+      },
+    });
+    await childRequest(enrolled.t, "/child/policy/acknowledge", enrolled.body.accessJwt, {
+      appliedPolicyVersion: 2,
+    });
+    const occurredAt = Date.now();
+    const alert = {
+      incidentId: "018f-safety-incident-0001",
+      type: "scam_text",
+      packageName: "com.example.messages",
+      confidenceBand: "high",
+      policyVersion: 2,
+      occurredAt,
+    };
+
+    const first = await childRequest(enrolled.t, "/child/safety-alerts", enrolled.body.accessJwt, alert);
+    const replay = await childRequest(enrolled.t, "/child/safety-alerts", enrolled.body.accessJwt, alert);
+    const firstCooldown = await enrolled.t.run(async (ctx: MutationCtx) =>
+      (await ctx.db.query("safetyNotificationCooldowns").collect())[0].nextAllowedAt,
+    );
+    const suppressed = await childRequest(enrolled.t, "/child/safety-alerts", enrolled.body.accessJwt, {
+      ...alert, incidentId: "018f-safety-incident-0002", occurredAt: occurredAt + 1,
+    });
+    expect(first.status).toBe(200);
+    expect(replay.status).toBe(200);
+    expect(suppressed.status).toBe(200);
+
+    const listSafetyAlerts = makeFunctionReference<"query", any, any>(
+      "modules/safetyAlerts/guardian:listSafetyAlerts",
+    ) as FunctionReference<"query", "public", any, any>;
+    const feed = await enrolled.t.withIdentity(identity).query(listSafetyAlerts, guardianArgs);
+    expect(feed).toEqual([expect.objectContaining({
+      incidentId: "018f-safety-incident-0002",
+    }), {
+      incidentId: alert.incidentId,
+      type: "scam_text",
+      packageName: "com.example.messages",
+      appLabel: "Messages",
+      confidenceBand: "high",
+      policyVersion: 2,
+      occurredAt,
+      createdAt: expect.any(Number),
+      expiresAt: expect.any(Number),
+    }]);
+    expect(JSON.stringify(feed)).not.toContain("rawText");
+    expect(JSON.stringify(feed)).not.toContain("fingerprint");
+    const deliveryState = await enrolled.t.run(async (ctx: MutationCtx) => ({
+      alerts: await ctx.db.query("safetyAlerts").collect(),
+      notices: (await ctx.db.query("guardianNotices").collect()).filter((notice) => notice.type === "safety"),
+      cooldowns: await ctx.db.query("safetyNotificationCooldowns").collect(),
+      receipts: await ctx.db.query("guardianNoticeReceipts").collect(),
+    }));
+    expect(deliveryState.alerts).toHaveLength(2);
+    expect(deliveryState.notices).toHaveLength(1);
+    expect(deliveryState.cooldowns).toHaveLength(1);
+    expect(deliveryState.cooldowns[0].nextAllowedAt).toBe(firstCooldown);
+    expect(deliveryState.receipts).toHaveLength(2);
+
+    await childRequest(enrolled.t, "/child/safety-alerts", enrolled.body.accessJwt, {
+      ...alert,
+      incidentId: "018f-safety-incident-nsfw-0001",
+      type: "nsfw_screen",
+      occurredAt: occurredAt + 2,
+    });
+    const independentTypes = await enrolled.t.run(async (ctx: MutationCtx) => ({
+      notices: (await ctx.db.query("guardianNotices").collect()).filter((notice) => notice.type === "safety"),
+      cooldowns: await ctx.db.query("safetyNotificationCooldowns").collect(),
+    }));
+    expect(independentTypes.notices).toHaveLength(2);
+    expect(independentTypes.cooldowns.map((row) => row.type).sort()).toEqual(["nsfw_screen", "scam_text"]);
+
+    await enrolled.t.run(async (ctx: MutationCtx) => {
+      const scamCooldown = independentTypes.cooldowns.find((row) => row.type === "scam_text")!;
+      await ctx.db.patch("safetyNotificationCooldowns", scamCooldown._id, { nextAllowedAt: 0 });
+    });
+    await childRequest(enrolled.t, "/child/safety-alerts", enrolled.body.accessJwt, {
+      ...alert, incidentId: "018f-safety-incident-0003", occurredAt: occurredAt + 2,
+    });
+    await childRequest(enrolled.t, "/child/safety-alerts", enrolled.body.accessJwt, {
+      ...alert, incidentId: "018f-safety-incident-stale", occurredAt: occurredAt - 5 * 60 * 1000 - 1,
+    });
+    const after = await enrolled.t.run(async (ctx: MutationCtx) => ({
+      alerts: await ctx.db.query("safetyAlerts").collect(),
+      notices: (await ctx.db.query("guardianNotices").collect()).filter((notice) => notice.type === "safety"),
+    }));
+    expect(after.alerts).toHaveLength(5);
+    expect(after.notices).toHaveLength(3);
   });
 });
 
