@@ -8,7 +8,7 @@ import { throwAppError } from "../../lib/errors";
 import { guardianMutation, guardianQuery } from "../../lib/functionWrappers";
 import { now } from "../../lib/time";
 
-const POLICY_SCHEMA_VERSION = 1;
+const POLICY_SCHEMA_VERSION = 2;
 const COMMAND_LIFETIME_MS = 7 * 24 * 60 * 60 * 1000;
 
 const updateArgs = {
@@ -16,6 +16,19 @@ const updateArgs = {
   expectedCurrentVersion: v.number(),
   operationId: v.string(),
 };
+
+const scheduleValidator = v.object({
+  scheduleId: v.string(),
+  weekdays: v.array(v.number()),
+  startMinute: v.number(),
+  endMinute: v.number(),
+});
+
+const appBlockRuleValidator = v.object({
+  packageName: v.string(),
+  manualBlocked: v.boolean(),
+  schedules: v.array(scheduleValidator),
+});
 
 export const getPolicyState = guardianQuery({
   operation: "policies.getState",
@@ -30,7 +43,7 @@ export const updateScreenTimeSummaries = guardianMutation({
   operation: "policies.updateScreenTimeSummaries",
   args: { ...updateArgs, enabled: v.boolean() },
   handler: async (ctx, actor, args) => await updatePolicy(ctx, actor, args, {
-    kind: "screen_time_summaries",
+    kind: "screen_time",
     value: { enabled: args.enabled },
   }),
 });
@@ -56,6 +69,36 @@ export const updateAppBlocking = guardianMutation({
   }),
 });
 
+export const updateAppBlockingRules = guardianMutation({
+  operation: "policies.updateAppBlockingRules",
+  args: { ...updateArgs, rules: v.array(appBlockRuleValidator) },
+  handler: async (ctx, actor, args) => {
+    validateAppBlockRules(args.rules);
+    return await updatePolicy(ctx, actor, args, {
+      kind: "app_blocking_rules",
+      value: { rules: args.rules },
+    });
+  },
+});
+
+export const updateLocationSharing = guardianMutation({
+  operation: "policies.updateLocationSharing",
+  args: { ...updateArgs, enabled: v.boolean() },
+  handler: async (ctx, actor, args) => await updatePolicy(ctx, actor, args, {
+    kind: "location_sharing",
+    value: { enabled: args.enabled },
+  }),
+});
+
+export const updateScreenTime = guardianMutation({
+  operation: "policies.updateScreenTime",
+  args: { ...updateArgs, enabled: v.boolean() },
+  handler: async (ctx, actor, args) => await updatePolicy(ctx, actor, args, {
+    kind: "screen_time",
+    value: { enabled: args.enabled },
+  }),
+});
+
 export const updateActiveScreenSafety = guardianMutation({
   operation: "policies.updateActiveScreenSafety",
   args: { ...updateArgs, enabled: v.boolean() },
@@ -66,10 +109,23 @@ export const updateActiveScreenSafety = guardianMutation({
 });
 
 type PolicyChange =
-  | { kind: "screen_time_summaries"; value: { enabled: boolean } }
+  | { kind: "screen_time"; value: { enabled: boolean } }
   | { kind: "safe_browsing"; value: { enabled: boolean; safeSearchEnabled: boolean } }
   | { kind: "app_blocking"; value: { enabled: boolean } }
+  | { kind: "app_blocking_rules"; value: { rules: AppBlockRule[] } }
+  | { kind: "location_sharing"; value: { enabled: boolean } }
   | { kind: "active_screen_safety"; value: { enabled: boolean } };
+
+type AppBlockRule = {
+  packageName: string;
+  manualBlocked: boolean;
+  schedules: Array<{
+    scheduleId: string;
+    weekdays: number[];
+    startMinute: number;
+    endMinute: number;
+  }>;
+};
 
 async function updatePolicy(
   ctx: MutationCtx,
@@ -105,18 +161,30 @@ async function updatePolicy(
   if (current.version !== args.expectedCurrentVersion) throwAppError("POLICY_CONFLICT");
 
   const next = {
-    appBlocking: change.kind === "app_blocking" ? change.value : current.appBlocking,
+    appBlocking: change.kind === "app_blocking"
+      ? { ...current.appBlocking, ...change.value, rules: current.appBlocking.rules ?? [] }
+      : change.kind === "app_blocking_rules"
+        ? {
+            enabled: current.appBlocking.enabled || change.value.rules.length > 0,
+            rules: change.value.rules,
+          }
+        : { ...current.appBlocking, rules: current.appBlocking.rules ?? [] },
     safeBrowsing: change.kind === "safe_browsing" ? change.value : current.safeBrowsing,
     activeScreenSafety: change.kind === "active_screen_safety" ? change.value : current.activeScreenSafety,
-    screenTimeSummariesEnabled:
-      change.kind === "screen_time_summaries" ? change.value.enabled : current.screenTimeSummariesEnabled,
+    locationSharing: change.kind === "location_sharing"
+      ? change.value
+      : current.locationSharing ?? { enabled: false },
+    screenTime: change.kind === "screen_time"
+      ? change.value
+      : current.screenTime ?? { enabled: current.screenTimeSummariesEnabled ?? false },
   };
   if (
     JSON.stringify(next) === JSON.stringify({
       appBlocking: current.appBlocking,
       safeBrowsing: current.safeBrowsing,
       activeScreenSafety: current.activeScreenSafety,
-      screenTimeSummariesEnabled: current.screenTimeSummariesEnabled,
+      locationSharing: current.locationSharing ?? { enabled: false },
+      screenTime: current.screenTime ?? { enabled: current.screenTimeSummariesEnabled ?? false },
     })
   ) {
     await ctx.db.insert("policySaveOperations", {
@@ -143,6 +211,7 @@ async function updatePolicy(
     createdByGuardianAccountId: actor.guardianAccountId,
     createdAt: serverNow,
   });
+  await applyImmediatePrivacyDisablement(ctx, args.childProfileId, enrollment._id, next);
   await ctx.db.insert("policySaveOperations", {
     householdId: actor.householdId,
     childProfileId: args.childProfileId,
@@ -197,6 +266,79 @@ async function updatePolicy(
     attempt: 1,
   });
   return await loadGuardianPolicyState(ctx, args.childProfileId);
+}
+
+function validateAppBlockRules(rules: AppBlockRule[]) {
+  if (rules.length > 100) throwAppError("VALIDATION_FAILED");
+  const packages = new Set<string>();
+  const packagePattern = /^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)+$/;
+  for (const rule of rules) {
+    if (
+      !packagePattern.test(rule.packageName) ||
+      rule.packageName.length > 255 ||
+      rule.packageName === "com.cereveil" ||
+      rule.packageName.startsWith("com.cereveil.") ||
+      packages.has(rule.packageName) ||
+      rule.schedules.length > 8 ||
+      (!rule.manualBlocked && rule.schedules.length === 0)
+    ) throwAppError("VALIDATION_FAILED");
+    packages.add(rule.packageName);
+    const scheduleIds = new Set<string>();
+    for (const schedule of rule.schedules) {
+      const weekdays = new Set(schedule.weekdays);
+      if (
+        schedule.scheduleId.length < 1 ||
+        schedule.scheduleId.length > 100 ||
+        scheduleIds.has(schedule.scheduleId) ||
+        weekdays.size !== schedule.weekdays.length ||
+        weekdays.size < 1 ||
+        [...weekdays].some((day) => !Number.isInteger(day) || day < 1 || day > 7) ||
+        !Number.isInteger(schedule.startMinute) ||
+        !Number.isInteger(schedule.endMinute) ||
+        schedule.startMinute < 0 || schedule.startMinute > 1439 ||
+        schedule.endMinute < 0 || schedule.endMinute > 1439 ||
+        schedule.startMinute === schedule.endMinute
+      ) throwAppError("VALIDATION_FAILED");
+      scheduleIds.add(schedule.scheduleId);
+    }
+  }
+}
+
+async function applyImmediatePrivacyDisablement(
+  ctx: MutationCtx,
+  childProfileId: Id<"childProfiles">,
+  activeEnrollmentId: Id<"activeEnrollments">,
+  policy: {
+    locationSharing: { enabled: boolean };
+    screenTime: { enabled: boolean };
+  },
+) {
+  if (!policy.locationSharing.enabled) {
+    const latest = await ctx.db.query("latestLocationStates")
+      .withIndex("by_active_enrollment_id", (q) => q.eq("activeEnrollmentId", activeEnrollmentId))
+      .unique();
+    if (latest !== null) await ctx.db.delete("latestLocationStates", latest._id);
+    const requests = await ctx.db.query("locationRefreshRequests")
+      .withIndex("by_child_profile_id_and_requested_at", (q) => q.eq("childProfileId", childProfileId))
+      .take(50);
+    for (const request of requests) await ctx.db.delete("locationRefreshRequests", request._id);
+  }
+  if (!policy.screenTime.enabled) {
+    const requests = await ctx.db.query("screenTimeRefreshRequests")
+      .withIndex("by_child_profile_id_and_requested_at", (q) => q.eq("childProfileId", childProfileId))
+      .take(50);
+    for (const request of requests) await ctx.db.delete("screenTimeRefreshRequests", request._id);
+    const snapshots = await ctx.db.query("screenTimeSnapshots")
+      .withIndex("by_active_enrollment_id_and_status", (q) => q.eq("activeEnrollmentId", activeEnrollmentId))
+      .take(50);
+    for (const snapshot of snapshots) {
+      const rows = await ctx.db.query("screenTimeSnapshotRows")
+        .withIndex("by_screen_time_snapshot_id", (q) => q.eq("screenTimeSnapshotId", snapshot._id))
+        .take(501);
+      for (const row of rows) await ctx.db.delete("screenTimeSnapshotRows", row._id);
+      await ctx.db.delete("screenTimeSnapshots", snapshot._id);
+    }
+  }
 }
 
 async function loadGuardianPolicyState(ctx: QueryCtx | MutationCtx, childProfileId: Id<"childProfiles">) {
@@ -259,9 +401,10 @@ function publicPolicy(policy: Awaited<ReturnType<typeof currentPolicy>>) {
   return {
     version: policy.version,
     schemaVersion: policy.schemaVersion,
-    appBlocking: policy.appBlocking,
+    appBlocking: { ...policy.appBlocking, rules: policy.appBlocking.rules ?? [] },
     safeBrowsing: policy.safeBrowsing,
     activeScreenSafety: policy.activeScreenSafety,
-    screenTimeSummariesEnabled: policy.screenTimeSummariesEnabled,
+    locationSharing: policy.locationSharing ?? { enabled: false },
+    screenTime: policy.screenTime ?? { enabled: policy.screenTimeSummariesEnabled ?? false },
   };
 }

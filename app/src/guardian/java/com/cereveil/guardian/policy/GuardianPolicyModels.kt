@@ -7,12 +7,13 @@ data class GuardianPolicy(
   val safeBrowsingEnabled: Boolean,
   val safeSearchEnabled: Boolean,
   val activeScreenSafetyEnabled: Boolean,
-  val screenTimeSummariesEnabled: Boolean,
+  val locationSharingEnabled: Boolean,
+  val screenTimeEnabled: Boolean,
 )
 
 enum class PolicyApplicationStatus { Pending, Applied, Failed }
 enum class PolicyFailureReason { UnsupportedSchema, InvalidPolicy, ActivationFailed }
-enum class PolicyFeature { AppBlocking, SafeBrowsing, ActiveScreenSafety, ScreenTimeSummaries }
+enum class PolicyFeature { AppBlocking, SafeBrowsing, ActiveScreenSafety, LocationSharing, ScreenTime }
 
 data class GuardianPolicyState(
   val desired: GuardianPolicy,

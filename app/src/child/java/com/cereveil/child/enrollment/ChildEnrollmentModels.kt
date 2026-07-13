@@ -4,6 +4,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.boolean
+import kotlinx.serialization.json.jsonArray
 
 data class EnrollmentQrPayload(val code: String) {
   companion object {
@@ -58,7 +59,8 @@ data class ChildSupervisionPolicy(
   val appBlocking: AppBlockingPolicy,
   val safeBrowsing: SafeBrowsingPolicy,
   val activeScreenSafety: ActiveScreenSafetyPolicy,
-  val screenTimeSummariesEnabled: Boolean,
+  val locationSharing: LocationSharingPolicy,
+  val screenTime: ScreenTimePolicy,
   val rawJson: String,
 ) {
   companion object {
@@ -66,7 +68,7 @@ data class ChildSupervisionPolicy(
       val value = Json.parseToJsonElement(raw).jsonObject
       val schemaVersion = value["schemaVersion"]?.jsonPrimitive?.content?.toIntOrNull()
         ?: error("Missing policy schema version")
-      require(schemaVersion == 1) { "Unsupported policy schema" }
+      require(schemaVersion == 2) { "Unsupported policy schema" }
       val safeBrowsing = value["safeBrowsing"]!!.jsonObject
       val safeBrowsingEnabled = safeBrowsing["enabled"]!!.jsonPrimitive.boolean
       val safeSearchEnabled = safeBrowsing["safeSearchEnabled"]!!.jsonPrimitive.boolean
@@ -74,26 +76,72 @@ data class ChildSupervisionPolicy(
       return ChildSupervisionPolicy(
         version = value["version"]!!.jsonPrimitive.content.toInt(),
         schemaVersion = schemaVersion,
-        appBlocking = AppBlockingPolicy(value["appBlocking"]!!.jsonObject["enabled"]!!.jsonPrimitive.boolean),
+        appBlocking = value["appBlocking"]!!.jsonObject.let { section ->
+          AppBlockingPolicy(
+            enabled = section["enabled"]!!.jsonPrimitive.boolean,
+            rules = section["rules"]!!.jsonArray.map { item ->
+              val rule = item.jsonObject
+              AppBlockRule(
+                packageName = rule["packageName"]!!.jsonPrimitive.content,
+                manualBlocked = rule["manualBlocked"]!!.jsonPrimitive.boolean,
+                schedules = rule["schedules"]!!.jsonArray.map { scheduleItem ->
+                  val schedule = scheduleItem.jsonObject
+                  AppBlockSchedule(
+                    scheduleId = schedule["scheduleId"]!!.jsonPrimitive.content,
+                    weekdays = schedule["weekdays"]!!.jsonArray
+                      .map { it.jsonPrimitive.content.toInt() }.toSet(),
+                    startMinute = schedule["startMinute"]!!.jsonPrimitive.content.toInt(),
+                    endMinute = schedule["endMinute"]!!.jsonPrimitive.content.toInt(),
+                  )
+                },
+              )
+            },
+          )
+        },
         safeBrowsing = SafeBrowsingPolicy(safeBrowsingEnabled, safeSearchEnabled),
         activeScreenSafety = ActiveScreenSafetyPolicy(value["activeScreenSafety"]!!.jsonObject["enabled"]!!.jsonPrimitive.boolean),
-        screenTimeSummariesEnabled = value["screenTimeSummariesEnabled"]!!.jsonPrimitive.boolean,
+        locationSharing = LocationSharingPolicy(value["locationSharing"]!!.jsonObject["enabled"]!!.jsonPrimitive.boolean),
+        screenTime = ScreenTimePolicy(value["screenTime"]!!.jsonObject["enabled"]!!.jsonPrimitive.boolean),
         rawJson = raw,
       )
     }
   }
 }
 
-data class AppBlockingPolicy(val enabled: Boolean)
+data class AppBlockingPolicy(val enabled: Boolean, val rules: List<AppBlockRule> = emptyList())
+data class AppBlockRule(
+  val packageName: String,
+  val manualBlocked: Boolean,
+  val schedules: List<AppBlockSchedule>,
+)
+data class AppBlockSchedule(
+  val scheduleId: String,
+  val weekdays: Set<Int>,
+  val startMinute: Int,
+  val endMinute: Int,
+)
 data class SafeBrowsingPolicy(val enabled: Boolean, val safeSearchEnabled: Boolean)
 data class ActiveScreenSafetyPolicy(val enabled: Boolean)
+data class LocationSharingPolicy(val enabled: Boolean)
+data class ScreenTimePolicy(val enabled: Boolean)
 
 data class ChildDeviceCommand(
   val commandId: String,
   val type: String,
-  val policyVersion: Int,
+  val policyVersion: Int?,
   val expiresAt: Long,
+  val referenceId: String? = null,
 )
+
+data class ChildAppCatalogEntry(val packageName: String, val label: String)
+data class ChildAccessGrant(val grantId: String, val packageName: String, val startsAt: Long, val expiresAt: Long)
+data class ChildLocationMeasurement(
+  val latitude: Double,
+  val longitude: Double,
+  val accuracyMeters: Double,
+  val capturedAt: Long,
+)
+data class ChildScreenTimeRow(val packageName: String, val totalTimeInForegroundMs: Long)
 
 data class ChildCapabilities(
   val accessibilityService: Boolean,
@@ -102,10 +150,11 @@ data class ChildCapabilities(
   val microphone: Boolean,
   val notificationAccess: Boolean,
   val batteryOptimizationExempt: Boolean,
+  val trustedDeviceTime: Boolean = true,
 ) {
   val protectionSetupComplete: Boolean
     get() = accessibilityService && usageAccess && location && microphone && notificationAccess &&
-      batteryOptimizationExempt
+      batteryOptimizationExempt && trustedDeviceTime
 }
 
 enum class ChildEnrollmentError {
@@ -151,6 +200,34 @@ interface ChildDeviceIdentityClient {
   suspend fun registerPushToken(accessJwt: String, token: String): ChildEnrollmentResult<Unit>
   suspend fun reconcileCommands(accessJwt: String): ChildEnrollmentResult<List<ChildDeviceCommand>>
   suspend fun rejectCommand(accessJwt: String, commandId: String, reason: String): ChildEnrollmentResult<Unit>
+  suspend fun acknowledgeCommand(accessJwt: String, commandId: String): ChildEnrollmentResult<Unit> =
+    ChildEnrollmentResult.Failure(ChildEnrollmentError.NetworkUnavailable)
+  suspend fun syncAppCatalog(accessJwt: String, apps: List<ChildAppCatalogEntry>): ChildEnrollmentResult<Unit> =
+    ChildEnrollmentResult.Failure(ChildEnrollmentError.NetworkUnavailable)
+  suspend fun fetchAccessGrants(accessJwt: String): ChildEnrollmentResult<List<ChildAccessGrant>> =
+    ChildEnrollmentResult.Failure(ChildEnrollmentError.NetworkUnavailable)
+  suspend fun uploadLocation(
+    accessJwt: String,
+    measurement: ChildLocationMeasurement,
+    refreshRequestId: String? = null,
+  ): ChildEnrollmentResult<Unit> = ChildEnrollmentResult.Failure(ChildEnrollmentError.NetworkUnavailable)
+  suspend fun failLocationRefresh(accessJwt: String, refreshRequestId: String, reason: String): ChildEnrollmentResult<Unit> =
+    ChildEnrollmentResult.Failure(ChildEnrollmentError.NetworkUnavailable)
+  suspend fun uploadScreenTime(
+    accessJwt: String,
+    refreshRequestId: String,
+    measuredAt: Long,
+    localDayStart: Long,
+    validUntil: Long,
+    rows: List<ChildScreenTimeRow>,
+  ): ChildEnrollmentResult<Unit> = ChildEnrollmentResult.Failure(ChildEnrollmentError.NetworkUnavailable)
+  suspend fun createAccessRequest(
+    accessJwt: String,
+    packageName: String,
+    appliedPolicyVersion: Int,
+    blockKind: String,
+    scheduledCoverageEnd: Long?,
+  ): ChildEnrollmentResult<Unit> = ChildEnrollmentResult.Failure(ChildEnrollmentError.NetworkUnavailable)
   suspend fun createTokenChallenge(credentialId: String): ChildEnrollmentResult<String>
   suspend fun exchangeTokenChallenge(
     credentialId: String,

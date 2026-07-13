@@ -55,7 +55,8 @@ fun GuardianPolicyContent(childProfileId: String) {
         model.update(PolicyFeature.SafeBrowsing, current.policy.desired.safeBrowsingEnabled, enabled)
       }, enabledByParent = current.policy.desired.safeBrowsingEnabled)
       PolicyToggle(PolicyControl.ActiveScreenSafety, current, model::update)
-      PolicyToggle(PolicyControl.ScreenTimeSummaries, current, model::update)
+      PolicyToggle(PolicyControl.LocationSharing, current, model::update)
+      PolicyToggle(PolicyControl.ScreenTime, current, model::update)
       current.updateError?.let { error ->
         Text(
           if (error == GuardianPolicyError.Conflict) "Settings changed on another Guardian Device. Reloaded latest settings."
@@ -109,13 +110,15 @@ private enum class PolicyControl(val label: String, val feature: PolicyFeature) 
   SafeBrowsing("Safe Browsing", PolicyFeature.SafeBrowsing),
   SafeSearch("Safe Search", PolicyFeature.SafeBrowsing),
   ActiveScreenSafety("Active Screen Safety", PolicyFeature.ActiveScreenSafety),
-  ScreenTimeSummaries("Screen Time Summaries", PolicyFeature.ScreenTimeSummaries);
+  LocationSharing("Location sharing", PolicyFeature.LocationSharing),
+  ScreenTime("Screen Time", PolicyFeature.ScreenTime);
 
   fun value(policy: GuardianPolicy) = when (this) {
     AppBlocking -> policy.appBlockingEnabled
     SafeBrowsing -> policy.safeBrowsingEnabled
     SafeSearch -> policy.safeSearchEnabled
     ActiveScreenSafety -> policy.activeScreenSafetyEnabled
-    ScreenTimeSummaries -> policy.screenTimeSummariesEnabled
+    LocationSharing -> policy.locationSharingEnabled
+    ScreenTime -> policy.screenTimeEnabled
   }
 }

@@ -47,6 +47,7 @@ android {
             buildConfigString("FIREBASE_API_KEY", envValue("FIREBASE_API_KEY"))
             buildConfigString("FIREBASE_PROJECT_ID", envValue("FIREBASE_PROJECT_ID"))
             buildConfigString("FIREBASE_GCM_SENDER_ID", envValue("FIREBASE_GCM_SENDER_ID"))
+            resValue("string", "google_maps_key", envValue("GOOGLE_MAPS_API_KEY"))
         }
         create("child") {
             dimension = "role"
@@ -142,6 +143,7 @@ dependencies {
   add("guardianImplementation", libs.zxing.core)
   add("guardianImplementation", platform(libs.firebase.bom))
   add("guardianImplementation", libs.firebase.messaging)
+  add("guardianImplementation", libs.play.services.maps)
   add("childImplementation", libs.google.code.scanner)
   add("childImplementation", platform(libs.firebase.bom))
   add("childImplementation", libs.firebase.messaging)

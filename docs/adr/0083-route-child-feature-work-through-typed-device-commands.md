@@ -1,0 +1,3 @@
+# Route Child feature work through typed device commands
+
+Cereveil will extend the existing Child Device Command lifecycle with strongly typed `refresh_location`, `refresh_screen_time`, and `reconcile_access_grants` variants alongside `apply_policy_version`. Feature modules create authoritative domain records first and commands reference those records without embedding location, Screen Time totals, Access Grant authority, or full policy state; FCM remains a generic `child_command` wake-up, after which Child Mode reconciles commands through its existing authenticated endpoint and processes them idempotently. This centralizes expiry, rejection, retry, and delivery behavior while keeping each feature's state and authorization in its owning module.

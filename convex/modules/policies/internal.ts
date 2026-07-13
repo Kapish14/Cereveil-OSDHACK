@@ -22,10 +22,14 @@ export const getCurrentPolicy = internalQuery({
     return {
       version: policy.version,
       schemaVersion: policy.schemaVersion,
-      appBlocking: policy.appBlocking,
+      appBlocking: {
+        enabled: policy.appBlocking.enabled,
+        rules: policy.appBlocking.rules ?? [],
+      },
       safeBrowsing: policy.safeBrowsing,
       activeScreenSafety: policy.activeScreenSafety,
-      screenTimeSummariesEnabled: policy.screenTimeSummariesEnabled,
+      locationSharing: policy.locationSharing ?? { enabled: false },
+      screenTime: policy.screenTime ?? { enabled: policy.screenTimeSummariesEnabled ?? false },
     };
   },
 });

@@ -111,6 +111,234 @@ http.route({
 });
 
 http.route({
+  path: "/child/app-catalog/generations/start",
+  method: "POST",
+  handler: childDeviceHttpAction({
+    operation: "child.appCatalog.start",
+    logSuccess: true,
+    handler: async (ctx, actor, request) => {
+      const expectedCount = numberField(await parseJson(request), "expectedCount");
+      if (expectedCount === null) throwAppError("VALIDATION_FAILED");
+      return await ctx.runMutation(internal.modules.appCatalog.internal.startGeneration, {
+        actor,
+        input: { expectedCount, serverNow: Date.now() },
+      });
+    },
+  }),
+});
+
+http.route({
+  path: "/child/app-catalog/generations/batch",
+  method: "POST",
+  handler: childDeviceHttpAction({
+    operation: "child.appCatalog.batch",
+    logSuccess: false,
+    handler: async (ctx, actor, request) => {
+      const body = await parseJson(request);
+      const generationId = stringField(body, "generationId");
+      const apps = appCatalogAppsField(body);
+      if (generationId === null || apps === null) throwAppError("VALIDATION_FAILED");
+      return await ctx.runMutation(internal.modules.appCatalog.internal.uploadBatch, {
+        actor,
+        input: {
+          generationId: generationId as Id<"appCatalogGenerations">,
+          apps,
+          serverNow: Date.now(),
+        },
+      });
+    },
+  }),
+});
+
+http.route({
+  path: "/child/app-catalog/generations/complete",
+  method: "POST",
+  handler: childDeviceHttpAction({
+    operation: "child.appCatalog.complete",
+    logSuccess: true,
+    handler: async (ctx, actor, request) => {
+      const generationId = stringField(await parseJson(request), "generationId");
+      if (generationId === null) throwAppError("VALIDATION_FAILED");
+      return await ctx.runMutation(internal.modules.appCatalog.internal.completeGeneration, {
+        actor,
+        input: {
+          generationId: generationId as Id<"appCatalogGenerations">,
+          serverNow: Date.now(),
+        },
+      });
+    },
+  }),
+});
+
+http.route({
+  path: "/child/access-requests",
+  method: "POST",
+  handler: childDeviceHttpAction({
+    operation: "child.access.createRequest",
+    logSuccess: true,
+    handler: async (ctx, actor, request) => {
+      const body = await parseJson(request);
+      const packageName = stringField(body, "packageName");
+      const appliedPolicyVersion = numberField(body, "appliedPolicyVersion");
+      const blockKind = stringField(body, "blockKind");
+      const scheduledCoverageEnd = optionalNumberField(body, "scheduledCoverageEnd");
+      if (
+        packageName === null ||
+        appliedPolicyVersion === null ||
+        (blockKind !== "manual" && blockKind !== "scheduled") ||
+        scheduledCoverageEnd === null
+      ) throwAppError("VALIDATION_FAILED");
+      return await ctx.runMutation(internal.modules.access.internal.createAccessRequest, {
+        actor,
+        input: {
+          packageName,
+          appliedPolicyVersion,
+          blockKind,
+          ...(scheduledCoverageEnd === undefined ? {} : { scheduledCoverageEnd }),
+          serverNow: Date.now(),
+        },
+      });
+    },
+  }),
+});
+
+http.route({
+  path: "/child/access-grants",
+  method: "GET",
+  handler: childDeviceHttpAction({
+    operation: "child.access.reconcileGrants",
+    logSuccess: false,
+    handler: async (ctx, actor) => await ctx.runQuery(
+      internal.modules.access.internal.reconcileAccessGrants,
+      { actor, input: { serverNow: Date.now() } },
+    ),
+  }),
+});
+
+http.route({
+  path: "/child/location",
+  method: "POST",
+  handler: childDeviceHttpAction({
+    operation: "child.location.record",
+    logSuccess: false,
+    handler: async (ctx, actor, request) => {
+      const body = await parseJson(request);
+      const latitude = numberField(body, "latitude");
+      const longitude = numberField(body, "longitude");
+      const accuracyMeters = numberField(body, "accuracyMeters");
+      const capturedAt = numberField(body, "capturedAt");
+      const refreshRequestId = optionalStringField(body, "refreshRequestId");
+      if (latitude === null || longitude === null || accuracyMeters === null || capturedAt === null || refreshRequestId === null) {
+        throwAppError("VALIDATION_FAILED");
+      }
+      return await ctx.runMutation(internal.modules.location.internal.recordMeasurement, {
+        actor,
+        input: {
+          latitude,
+          longitude,
+          accuracyMeters,
+          capturedAt,
+          ...(refreshRequestId === undefined ? {} : { refreshRequestId: refreshRequestId as Id<"locationRefreshRequests"> }),
+          serverNow: Date.now(),
+        },
+      });
+    },
+  }),
+});
+
+http.route({
+  path: "/child/location/refresh/fail",
+  method: "POST",
+  handler: childDeviceHttpAction({
+    operation: "child.location.failRefresh",
+    logSuccess: true,
+    handler: async (ctx, actor, request) => {
+      const body = await parseJson(request);
+      const refreshRequestId = stringField(body, "refreshRequestId");
+      const reason = stringField(body, "reason");
+      if (refreshRequestId === null || (reason !== "measurement_failed" && reason !== "capability_unavailable")) {
+        throwAppError("VALIDATION_FAILED");
+      }
+      return await ctx.runMutation(internal.modules.location.internal.failRefresh, {
+        actor,
+        input: {
+          refreshRequestId: refreshRequestId as Id<"locationRefreshRequests">,
+          reason,
+          serverNow: Date.now(),
+        },
+      });
+    },
+  }),
+});
+
+http.route({
+  path: "/child/screen-time/snapshots/start",
+  method: "POST",
+  handler: childDeviceHttpAction({
+    operation: "child.screenTime.start",
+    logSuccess: true,
+    handler: async (ctx, actor, request) => {
+      const body = await parseJson(request);
+      const refreshRequestId = stringField(body, "refreshRequestId");
+      const expectedCount = numberField(body, "expectedCount");
+      const measuredAt = numberField(body, "measuredAt");
+      const localDayStart = numberField(body, "localDayStart");
+      const validUntil = numberField(body, "validUntil");
+      if (refreshRequestId === null || expectedCount === null || measuredAt === null || localDayStart === null || validUntil === null) {
+        throwAppError("VALIDATION_FAILED");
+      }
+      return await ctx.runMutation(internal.modules.screenTime.internal.startSnapshot, {
+        actor,
+        input: {
+          refreshRequestId: refreshRequestId as Id<"screenTimeRefreshRequests">,
+          expectedCount,
+          measuredAt,
+          localDayStart,
+          validUntil,
+          serverNow: Date.now(),
+        },
+      });
+    },
+  }),
+});
+
+http.route({
+  path: "/child/screen-time/snapshots/batch",
+  method: "POST",
+  handler: childDeviceHttpAction({
+    operation: "child.screenTime.batch",
+    logSuccess: false,
+    handler: async (ctx, actor, request) => {
+      const body = await parseJson(request);
+      const snapshotId = stringField(body, "snapshotId");
+      const rows = screenTimeRowsField(body);
+      if (snapshotId === null || rows === null) throwAppError("VALIDATION_FAILED");
+      return await ctx.runMutation(internal.modules.screenTime.internal.uploadSnapshotBatch, {
+        actor,
+        input: { snapshotId: snapshotId as Id<"screenTimeSnapshots">, rows, serverNow: Date.now() },
+      });
+    },
+  }),
+});
+
+http.route({
+  path: "/child/screen-time/snapshots/complete",
+  method: "POST",
+  handler: childDeviceHttpAction({
+    operation: "child.screenTime.complete",
+    logSuccess: true,
+    handler: async (ctx, actor, request) => {
+      const snapshotId = stringField(await parseJson(request), "snapshotId");
+      if (snapshotId === null) throwAppError("VALIDATION_FAILED");
+      return await ctx.runMutation(internal.modules.screenTime.internal.completeSnapshot, {
+        actor,
+        input: { snapshotId: snapshotId as Id<"screenTimeSnapshots">, serverNow: Date.now() },
+      });
+    },
+  }),
+});
+
+http.route({
   path: "/child/policy/acknowledge",
   method: "POST",
   handler: childDeviceHttpAction({
@@ -136,8 +364,10 @@ http.route({
     logSuccess: true,
     handler: async (ctx, actor, request) => {
       const body = await parseJson(request);
-      const capabilities = capabilitiesField(body);
       const supportedPolicySchemaVersion = numberField(body, "supportedPolicySchemaVersion");
+      const capabilities = supportedPolicySchemaVersion === null
+        ? null
+        : capabilitiesField(body, supportedPolicySchemaVersion);
       if (capabilities === null || supportedPolicySchemaVersion === null) throwAppError("VALIDATION_FAILED");
       return await ctx.runMutation(internal.modules.deviceIdentity.internal.recordHeartbeat, {
         actor,
@@ -209,6 +439,26 @@ http.route({
         input: {
           commandId: commandId as Id<"childDeviceCommands">,
           reason: reason as "unsupported_command" | "invalid_command" | "unable_to_apply" | "unsupported_schema",
+          serverNow: Date.now(),
+        },
+      });
+    },
+  }),
+});
+
+http.route({
+  path: "/child/commands/acknowledge",
+  method: "POST",
+  handler: childDeviceHttpAction({
+    operation: "child.commands.acknowledge",
+    logSuccess: true,
+    handler: async (ctx, actor, request) => {
+      const commandId = stringField(await parseJson(request), "commandId");
+      if (commandId === null) throwAppError("VALIDATION_FAILED");
+      return await ctx.runMutation(internal.modules.commands.internal.acknowledgeFeatureCommand, {
+        actor,
+        input: {
+          commandId: commandId as Id<"childDeviceCommands">,
           serverNow: Date.now(),
         },
       });
@@ -342,7 +592,41 @@ function numberField(body: Record<string, unknown> | null, key: string) {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
-function capabilitiesField(body: Record<string, unknown> | null) {
+function optionalNumberField(body: Record<string, unknown> | null, key: string) {
+  const value = body?.[key];
+  if (value === undefined) return undefined;
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function appCatalogAppsField(body: Record<string, unknown> | null) {
+  const value = body?.apps;
+  if (!Array.isArray(value)) return null;
+  const apps: Array<{ packageName: string; label: string }> = [];
+  for (const item of value) {
+    if (typeof item !== "object" || item === null) return null;
+    const packageName = (item as Record<string, unknown>).packageName;
+    const label = (item as Record<string, unknown>).label;
+    if (typeof packageName !== "string" || typeof label !== "string") return null;
+    apps.push({ packageName, label });
+  }
+  return apps;
+}
+
+function screenTimeRowsField(body: Record<string, unknown> | null) {
+  const value = body?.rows;
+  if (!Array.isArray(value)) return null;
+  const rows: Array<{ packageName: string; totalTimeInForegroundMs: number }> = [];
+  for (const item of value) {
+    if (typeof item !== "object" || item === null) return null;
+    const packageName = (item as Record<string, unknown>).packageName;
+    const totalTimeInForegroundMs = (item as Record<string, unknown>).totalTimeInForegroundMs;
+    if (typeof packageName !== "string" || typeof totalTimeInForegroundMs !== "number") return null;
+    rows.push({ packageName, totalTimeInForegroundMs });
+  }
+  return rows;
+}
+
+function capabilitiesField(body: Record<string, unknown> | null, supportedPolicySchemaVersion: number) {
   const value = body?.capabilities;
   if (typeof value !== "object" || value === null) return null;
   const capabilities = value as Record<string, unknown>;
@@ -355,6 +639,8 @@ function capabilitiesField(body: Record<string, unknown> | null) {
     "batteryOptimizationExempt",
   ] as const;
   if (keys.some((key) => typeof capabilities[key] !== "boolean")) return null;
+  const trustedDeviceTime = capabilities.trustedDeviceTime;
+  if (supportedPolicySchemaVersion >= 2 && typeof trustedDeviceTime !== "boolean") return null;
   return {
     accessibilityService: capabilities.accessibilityService as boolean,
     usageAccess: capabilities.usageAccess as boolean,
@@ -362,6 +648,9 @@ function capabilitiesField(body: Record<string, unknown> | null) {
     microphone: capabilities.microphone as boolean,
     notificationAccess: capabilities.notificationAccess as boolean,
     batteryOptimizationExempt: capabilities.batteryOptimizationExempt as boolean,
+    trustedDeviceTime: supportedPolicySchemaVersion >= 2
+      ? trustedDeviceTime as boolean
+      : true,
   };
 }
 

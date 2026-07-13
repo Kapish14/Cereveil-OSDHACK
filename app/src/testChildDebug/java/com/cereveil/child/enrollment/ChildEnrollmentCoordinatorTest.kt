@@ -217,6 +217,37 @@ class ChildEnrollmentCoordinatorTest {
     assertTrue("client:ack" !in harness.events)
   }
 
+  @Test
+  fun supervisionSyncDelegatesTypedFeatureCommandsAndThenMaintainsLatestState() = runTest {
+    val harness = Harness().apply {
+      store.save(completionState().copy(accessJwtExpiresAt = Long.MAX_VALUE))
+      store.savePolicy(testPolicy())
+      store.markPolicyAcknowledged(1)
+      client.commands = listOf(ChildDeviceCommand("command-2", "refresh_location", null, Long.MAX_VALUE, "refresh-1"))
+      events.clear()
+    }
+    val processor = object : ChildFeatureCommandProcessor {
+      override suspend fun process(accessJwt: String, command: ChildDeviceCommand) =
+        ChildEnrollmentResult.Success(Unit).also { harness.events += "feature:${command.type}:${command.referenceId}" }
+      override suspend fun maintain(accessJwt: String, policy: ChildSupervisionPolicy?) =
+        ChildEnrollmentResult.Success(Unit).also { harness.events += "feature:maintain" }
+    }
+    val sync = ChildSupervisionSyncCoordinator(
+      client = harness.client,
+      store = harness.store,
+      capabilities = { ChildCapabilities(true, true, true, true, true, true) },
+      refreshToken = { ChildEnrollmentResult.Failure(ChildEnrollmentError.EnrollmentFailed) },
+      featureProcessor = processor,
+      now = { 1L },
+    )
+
+    assertEquals(ChildSupervisionSyncOutcome.Complete, sync.sync())
+    assertEquals(
+      listOf("client:commands", "feature:refresh_location:refresh-1", "feature:maintain", "client:heartbeat"),
+      harness.events,
+    )
+  }
+
   private class Harness {
     val events = mutableListOf<String>()
     val store = FakeStore(events)
@@ -307,10 +338,11 @@ private fun completionState() = LocalChildEnrollmentState(
 
 private fun testPolicy() = ChildSupervisionPolicy(
   version = 1,
-  schemaVersion = 1,
+  schemaVersion = 2,
   appBlocking = AppBlockingPolicy(false),
   safeBrowsing = SafeBrowsingPolicy(false, false),
   activeScreenSafety = ActiveScreenSafetyPolicy(false),
-  screenTimeSummariesEnabled = false,
-  rawJson = """{"version":1,"schemaVersion":1,"appBlocking":{"enabled":false},"safeBrowsing":{"enabled":false,"safeSearchEnabled":false},"activeScreenSafety":{"enabled":false},"screenTimeSummariesEnabled":false}""",
+  locationSharing = LocationSharingPolicy(false),
+  screenTime = ScreenTimePolicy(false),
+  rawJson = """{"version":1,"schemaVersion":2,"appBlocking":{"enabled":false,"rules":[]},"safeBrowsing":{"enabled":false,"safeSearchEnabled":false},"activeScreenSafety":{"enabled":false},"locationSharing":{"enabled":false},"screenTime":{"enabled":false}}""",
 )

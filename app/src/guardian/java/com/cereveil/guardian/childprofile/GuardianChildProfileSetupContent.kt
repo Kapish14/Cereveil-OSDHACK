@@ -165,6 +165,7 @@ private fun ProfileList(
       Text("Unavailable: ${detailProfile.unavailableCapabilities.joinToString()}")
     }
     if (BuildConfig.DEBUG) GuardianPolicyContent(detailProfile.childProfileId)
+    GuardianLiveFeaturesContent(detailProfile.childProfileId)
     CereveilSecondaryButton(text = "Back to children", onClick = { detailProfileId = null })
     return
   }

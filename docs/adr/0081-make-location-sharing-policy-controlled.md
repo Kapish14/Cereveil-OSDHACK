@@ -1,0 +1,3 @@
+# Make Location Sharing policy-controlled
+
+Cereveil will make Location Sharing an explicit Supervision Policy feature that is off in the Initial Supervision Policy. Enabling it permits Location Heartbeats and Location Refresh Requests; disabling it stops Child Mode collection, clears unsent local location work, immediately deletes the latest backend location and pending refresh requests, and prevents new refreshes. The Android location capability remains required and monitored by Supervision Health even while sharing is disabled, preserving Protection Setup readiness without silently collecting location before the Guardian intentionally enables the feature.

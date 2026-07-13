@@ -57,10 +57,11 @@ export async function createChildProfile(
     householdId,
     childProfileId,
     version: policyVersion,
-    schemaVersion: 1,
+    schemaVersion: 2,
     status: "active",
     appBlocking: {
       enabled: false,
+      rules: [],
     },
     safeBrowsing: {
       enabled: false,
@@ -69,7 +70,8 @@ export async function createChildProfile(
     activeScreenSafety: {
       enabled: false,
     },
-    screenTimeSummariesEnabled: false,
+    locationSharing: { enabled: false },
+    screenTime: { enabled: false },
     createdByGuardianAccountId: guardianAccountId,
     createdAt: serverNow,
   });

@@ -7,12 +7,26 @@ import androidx.work.CoroutineWorker
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.PeriodicWorkRequestBuilder
+import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import com.cereveil.BuildConfig
 import java.util.concurrent.TimeUnit
 
+interface ChildFeatureCommandProcessor {
+  suspend fun process(accessJwt: String, command: ChildDeviceCommand): ChildEnrollmentResult<Unit>
+  suspend fun maintain(accessJwt: String, policy: ChildSupervisionPolicy?): ChildEnrollmentResult<Unit> =
+    ChildEnrollmentResult.Success(Unit)
+}
+
 object ChildSupervisionWork {
+  fun enqueueNow(context: Context) {
+    WorkManager.getInstance(context).enqueue(
+      OneTimeWorkRequestBuilder<ChildSupervisionWorker>()
+        .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
+        .build(),
+    )
+  }
   fun schedule(context: Context, activeEnrollmentId: String) {
     val request = PeriodicWorkRequestBuilder<ChildSupervisionWorker>(15, TimeUnit.MINUTES)
       .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
@@ -37,6 +51,7 @@ class ChildSupervisionWorker(context: Context, parameters: WorkerParameters) :
       capabilities = AndroidProtectionCapabilities(applicationContext)::current,
       refreshToken = { ChildDeviceTokenProvider(client, AndroidChildDeviceKeyStore(), store).refresh() },
       runtime = AndroidPolicyControlledRuntime(applicationContext),
+      featureProcessor = AndroidChildFeatureCommandProcessor(applicationContext, client),
     ).sync()
     return when (outcome) {
       ChildSupervisionSyncOutcome.Complete -> Result.success()
@@ -57,6 +72,7 @@ class ChildSupervisionSyncCoordinator(
   private val capabilities: () -> ChildCapabilities,
   private val refreshToken: suspend () -> ChildEnrollmentResult<String>,
   private val runtime: PolicyControlledRuntime = PolicyControlledRuntime { PolicyActivationResult.Success },
+  private val featureProcessor: ChildFeatureCommandProcessor? = null,
   private val now: () -> Long = System::currentTimeMillis,
 ) {
   suspend fun sync(): ChildSupervisionSyncOutcome {
@@ -71,10 +87,12 @@ class ChildSupervisionSyncCoordinator(
       is ChildEnrollmentResult.Success -> {
         for (command in commands.value) {
           if (command.type != "apply_policy_version") {
-            when (val rejected = client.rejectCommand(token, command.commandId, "unsupported_command")) {
+            val processed = featureProcessor?.process(token, command)
+              ?: client.rejectCommand(token, command.commandId, "unsupported_command")
+            when (processed) {
               is ChildEnrollmentResult.Success -> Unit
               is ChildEnrollmentResult.Failure -> {
-                if (rejected.error == ChildEnrollmentError.Unauthorized) return ChildSupervisionSyncOutcome.Stop
+                if (processed.error == ChildEnrollmentError.Unauthorized) return ChildSupervisionSyncOutcome.Stop
                 retry = true
               }
             }
@@ -142,6 +160,12 @@ class ChildSupervisionSyncCoordinator(
       }
     }
     val policy = store.loadPolicy()
+    featureProcessor?.maintain(token, policy)?.let { result ->
+      if (result is ChildEnrollmentResult.Failure) {
+        if (result.error == ChildEnrollmentError.Unauthorized) return ChildSupervisionSyncOutcome.Stop
+        retry = true
+      }
+    }
     if (policy != null && acknowledgedPolicyVersion != policy.version) {
       when (val result = client.acknowledgePolicy(token, policy.version)) {
         is ChildEnrollmentResult.Success -> store.markPolicyAcknowledged(policy.version)

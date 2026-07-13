@@ -80,6 +80,16 @@ export default defineSchema({
     status: v.union(v.literal("active"), v.literal("superseded")),
     appBlocking: v.object({
       enabled: v.boolean(),
+      rules: v.optional(v.array(v.object({
+        packageName: v.string(),
+        manualBlocked: v.boolean(),
+        schedules: v.array(v.object({
+          scheduleId: v.string(),
+          weekdays: v.array(v.number()),
+          startMinute: v.number(),
+          endMinute: v.number(),
+        })),
+      }))),
     }),
     safeBrowsing: v.object({
       enabled: v.boolean(),
@@ -88,7 +98,9 @@ export default defineSchema({
     activeScreenSafety: v.object({
       enabled: v.boolean(),
     }),
-    screenTimeSummariesEnabled: v.boolean(),
+    locationSharing: v.optional(v.object({ enabled: v.boolean() })),
+    screenTime: v.optional(v.object({ enabled: v.boolean() })),
+    screenTimeSummariesEnabled: v.optional(v.boolean()),
     createdByGuardianAccountId: v.id("guardianAccounts"),
     createdAt: v.number(),
   })
@@ -104,6 +116,42 @@ export default defineSchema({
     resultPolicyVersion: v.number(),
     createdAt: v.number(),
   }).index("by_child_profile_id_and_operation_id", ["childProfileId", "operationId"]),
+
+  appCatalogGenerations: defineTable({
+    householdId: v.id("households"),
+    childProfileId: v.id("childProfiles"),
+    activeEnrollmentId: v.id("activeEnrollments"),
+    childDeviceId: v.id("childDevices"),
+    status: v.union(
+      v.literal("staging"),
+      v.literal("current"),
+      v.literal("superseded"),
+      v.literal("abandoned"),
+    ),
+    expectedCount: v.number(),
+    uploadedCount: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    syncedAt: v.optional(v.number()),
+    expiresAt: v.number(),
+  })
+    .index("by_active_enrollment_id_and_status", ["activeEnrollmentId", "status"])
+    .index("by_expires_at", ["expiresAt"]),
+
+  appCatalogEntries: defineTable({
+    appCatalogGenerationId: v.id("appCatalogGenerations"),
+    householdId: v.id("households"),
+    childProfileId: v.id("childProfiles"),
+    activeEnrollmentId: v.id("activeEnrollments"),
+    packageName: v.string(),
+    label: v.string(),
+    createdAt: v.number(),
+  })
+    .index("by_app_catalog_generation_id", ["appCatalogGenerationId"])
+    .index("by_app_catalog_generation_id_and_package_name", [
+      "appCatalogGenerationId",
+      "packageName",
+    ]),
 
   enrollmentCodes: defineTable({
     householdId: v.id("households"),
@@ -214,6 +262,7 @@ export default defineSchema({
         microphone: v.boolean(),
         notificationAccess: v.boolean(),
         batteryOptimizationExempt: v.boolean(),
+        trustedDeviceTime: v.optional(v.boolean()),
       }),
     ),
     lastHeartbeatAt: v.optional(v.number()),
@@ -261,9 +310,15 @@ export default defineSchema({
     householdId: v.id("households"),
     childProfileId: v.id("childProfiles"),
     activeEnrollmentId: v.id("activeEnrollments"),
-    type: v.union(v.literal("offline"), v.literal("recovery"), v.literal("tamper")),
+    type: v.union(
+      v.literal("offline"),
+      v.literal("recovery"),
+      v.literal("tamper"),
+      v.literal("access_request"),
+    ),
     episodeKey: v.string(),
     unavailableCapabilities: v.optional(v.array(v.string())),
+    accessRequestId: v.optional(v.id("accessRequests")),
     status: v.union(v.literal("active"), v.literal("expired")),
     occurredAt: v.number(),
     expiresAt: v.number(),
@@ -291,8 +346,14 @@ export default defineSchema({
     childProfileId: v.id("childProfiles"),
     activeEnrollmentId: v.id("activeEnrollments"),
     childDeviceId: v.id("childDevices"),
-    type: v.literal("apply_policy_version"),
-    policyVersion: v.number(),
+    type: v.union(
+      v.literal("apply_policy_version"),
+      v.literal("refresh_location"),
+      v.literal("refresh_screen_time"),
+      v.literal("reconcile_access_grants"),
+    ),
+    policyVersion: v.optional(v.number()),
+    referenceId: v.optional(v.string()),
     intentKey: v.string(),
     status: v.union(
       v.literal("pending"),
@@ -318,6 +379,124 @@ export default defineSchema({
     .index("by_active_enrollment_id_and_status", ["activeEnrollmentId", "status"])
     .index("by_active_enrollment_id_and_intent_key", ["activeEnrollmentId", "intentKey"])
     .index("by_expires_at", ["expiresAt"]),
+
+  accessRequests: defineTable({
+    householdId: v.id("households"),
+    childProfileId: v.id("childProfiles"),
+    activeEnrollmentId: v.id("activeEnrollments"),
+    childDeviceId: v.id("childDevices"),
+    packageName: v.string(),
+    appliedPolicyVersion: v.number(),
+    blockKind: v.union(v.literal("manual"), v.literal("scheduled")),
+    scheduledCoverageEnd: v.optional(v.number()),
+    status: v.union(v.literal("pending"), v.literal("approved"), v.literal("denied"), v.literal("expired")),
+    createdAt: v.number(),
+    resolvedAt: v.optional(v.number()),
+    expiresAt: v.number(),
+    purgeAt: v.number(),
+  })
+    .index("by_active_enrollment_id_and_package_name_and_status", ["activeEnrollmentId", "packageName", "status"])
+    .index("by_child_profile_id_and_status", ["childProfileId", "status"])
+    .index("by_expires_at", ["expiresAt"])
+    .index("by_purge_at", ["purgeAt"]),
+
+  accessGrants: defineTable({
+    householdId: v.id("households"),
+    childProfileId: v.id("childProfiles"),
+    activeEnrollmentId: v.id("activeEnrollments"),
+    childDeviceId: v.id("childDevices"),
+    accessRequestId: v.id("accessRequests"),
+    packageName: v.string(),
+    startsAt: v.number(),
+    expiresAt: v.number(),
+    createdAt: v.number(),
+    purgeAt: v.number(),
+  })
+    .index("by_active_enrollment_id_and_expires_at", ["activeEnrollmentId", "expiresAt"])
+    .index("by_access_request_id", ["accessRequestId"])
+    .index("by_purge_at", ["purgeAt"]),
+
+  latestLocationStates: defineTable({
+    householdId: v.id("households"),
+    childProfileId: v.id("childProfiles"),
+    activeEnrollmentId: v.id("activeEnrollments"),
+    childDeviceId: v.id("childDevices"),
+    latitude: v.number(),
+    longitude: v.number(),
+    accuracyMeters: v.number(),
+    capturedAt: v.number(),
+    uploadedAt: v.number(),
+  })
+    .index("by_active_enrollment_id", ["activeEnrollmentId"])
+    .index("by_child_profile_id", ["childProfileId"]),
+
+  locationRefreshRequests: defineTable({
+    householdId: v.id("households"),
+    childProfileId: v.id("childProfiles"),
+    activeEnrollmentId: v.id("activeEnrollments"),
+    childDeviceId: v.id("childDevices"),
+    status: v.union(v.literal("pending"), v.literal("completed"), v.literal("failed"), v.literal("expired")),
+    requestedAt: v.number(),
+    completedAt: v.optional(v.number()),
+    failureReason: v.optional(v.union(v.literal("measurement_failed"), v.literal("capability_unavailable"))),
+    expiresAt: v.number(),
+    purgeAt: v.number(),
+  })
+    .index("by_child_profile_id_and_status", ["childProfileId", "status"])
+    .index("by_child_profile_id_and_requested_at", ["childProfileId", "requestedAt"])
+    .index("by_active_enrollment_id_and_status", ["activeEnrollmentId", "status"])
+    .index("by_expires_at", ["expiresAt"])
+    .index("by_purge_at", ["purgeAt"]),
+
+  screenTimeRefreshRequests: defineTable({
+    householdId: v.id("households"),
+    childProfileId: v.id("childProfiles"),
+    activeEnrollmentId: v.id("activeEnrollments"),
+    childDeviceId: v.id("childDevices"),
+    status: v.union(v.literal("pending"), v.literal("completed"), v.literal("failed"), v.literal("expired")),
+    requestedAt: v.number(),
+    completedAt: v.optional(v.number()),
+    expiresAt: v.number(),
+    purgeAt: v.number(),
+  })
+    .index("by_child_profile_id_and_status", ["childProfileId", "status"])
+    .index("by_child_profile_id_and_requested_at", ["childProfileId", "requestedAt"])
+    .index("by_active_enrollment_id_and_status", ["activeEnrollmentId", "status"])
+    .index("by_expires_at", ["expiresAt"])
+    .index("by_purge_at", ["purgeAt"]),
+
+  screenTimeSnapshots: defineTable({
+    householdId: v.id("households"),
+    childProfileId: v.id("childProfiles"),
+    activeEnrollmentId: v.id("activeEnrollments"),
+    childDeviceId: v.id("childDevices"),
+    screenTimeRefreshRequestId: v.id("screenTimeRefreshRequests"),
+    status: v.union(v.literal("staging"), v.literal("current"), v.literal("superseded"), v.literal("abandoned")),
+    expectedCount: v.number(),
+    uploadedCount: v.number(),
+    measuredAt: v.number(),
+    localDayStart: v.number(),
+    validUntil: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    purgeAt: v.number(),
+  })
+    .index("by_active_enrollment_id_and_status", ["activeEnrollmentId", "status"])
+    .index("by_screen_time_refresh_request_id", ["screenTimeRefreshRequestId"])
+    .index("by_valid_until", ["validUntil"])
+    .index("by_purge_at", ["purgeAt"]),
+
+  screenTimeSnapshotRows: defineTable({
+    screenTimeSnapshotId: v.id("screenTimeSnapshots"),
+    householdId: v.id("households"),
+    childProfileId: v.id("childProfiles"),
+    activeEnrollmentId: v.id("activeEnrollments"),
+    packageName: v.string(),
+    totalTimeInForegroundMs: v.number(),
+    createdAt: v.number(),
+  })
+    .index("by_screen_time_snapshot_id", ["screenTimeSnapshotId"])
+    .index("by_screen_time_snapshot_id_and_package_name", ["screenTimeSnapshotId", "packageName"]),
 
   fcmDeliveryAttempts: defineTable({
     recordKind: v.union(v.literal("guardianNotice"), v.literal("childDeviceCommand")),

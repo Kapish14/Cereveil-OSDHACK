@@ -10,6 +10,7 @@
 
 import type * as crons from "../crons.js";
 import type * as fcmDelivery from "../fcmDelivery.js";
+import type * as featureCleanup from "../featureCleanup.js";
 import type * as http from "../http.js";
 import type * as lib_actors from "../lib/actors.js";
 import type * as lib_auth from "../lib/auth.js";
@@ -22,6 +23,10 @@ import type * as lib_requestLogging from "../lib/requestLogging.js";
 import type * as lib_sensitive from "../lib/sensitive.js";
 import type * as lib_time from "../lib/time.js";
 import type * as messagingCleanup from "../messagingCleanup.js";
+import type * as modules_access_guardian from "../modules/access/guardian.js";
+import type * as modules_access_internal from "../modules/access/internal.js";
+import type * as modules_appCatalog_guardian from "../modules/appCatalog/guardian.js";
+import type * as modules_appCatalog_internal from "../modules/appCatalog/internal.js";
 import type * as modules_childProfiles_data from "../modules/childProfiles/data.js";
 import type * as modules_childProfiles_public from "../modules/childProfiles/public.js";
 import type * as modules_childProfiles_useCases from "../modules/childProfiles/useCases.js";
@@ -34,10 +39,14 @@ import type * as modules_guardianAuth_data from "../modules/guardianAuth/data.js
 import type * as modules_guardianAuth_public from "../modules/guardianAuth/public.js";
 import type * as modules_guardianAuth_useCases from "../modules/guardianAuth/useCases.js";
 import type * as modules_guardianAuth_validators from "../modules/guardianAuth/validators.js";
+import type * as modules_location_guardian from "../modules/location/guardian.js";
+import type * as modules_location_internal from "../modules/location/internal.js";
 import type * as modules_notifications_internal from "../modules/notifications/internal.js";
 import type * as modules_notifications_public from "../modules/notifications/public.js";
 import type * as modules_policies_guardian from "../modules/policies/guardian.js";
 import type * as modules_policies_internal from "../modules/policies/internal.js";
+import type * as modules_screenTime_guardian from "../modules/screenTime/guardian.js";
+import type * as modules_screenTime_internal from "../modules/screenTime/internal.js";
 
 import type {
   ApiFromModules,
@@ -48,6 +57,7 @@ import type {
 declare const fullApi: ApiFromModules<{
   crons: typeof crons;
   fcmDelivery: typeof fcmDelivery;
+  featureCleanup: typeof featureCleanup;
   http: typeof http;
   "lib/actors": typeof lib_actors;
   "lib/auth": typeof lib_auth;
@@ -60,6 +70,10 @@ declare const fullApi: ApiFromModules<{
   "lib/sensitive": typeof lib_sensitive;
   "lib/time": typeof lib_time;
   messagingCleanup: typeof messagingCleanup;
+  "modules/access/guardian": typeof modules_access_guardian;
+  "modules/access/internal": typeof modules_access_internal;
+  "modules/appCatalog/guardian": typeof modules_appCatalog_guardian;
+  "modules/appCatalog/internal": typeof modules_appCatalog_internal;
   "modules/childProfiles/data": typeof modules_childProfiles_data;
   "modules/childProfiles/public": typeof modules_childProfiles_public;
   "modules/childProfiles/useCases": typeof modules_childProfiles_useCases;
@@ -72,10 +86,14 @@ declare const fullApi: ApiFromModules<{
   "modules/guardianAuth/public": typeof modules_guardianAuth_public;
   "modules/guardianAuth/useCases": typeof modules_guardianAuth_useCases;
   "modules/guardianAuth/validators": typeof modules_guardianAuth_validators;
+  "modules/location/guardian": typeof modules_location_guardian;
+  "modules/location/internal": typeof modules_location_internal;
   "modules/notifications/internal": typeof modules_notifications_internal;
   "modules/notifications/public": typeof modules_notifications_public;
   "modules/policies/guardian": typeof modules_policies_guardian;
   "modules/policies/internal": typeof modules_policies_internal;
+  "modules/screenTime/guardian": typeof modules_screenTime_guardian;
+  "modules/screenTime/internal": typeof modules_screenTime_internal;
 }>;
 
 /**

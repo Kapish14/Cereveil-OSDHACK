@@ -240,6 +240,7 @@ const capabilitiesValidator = v.object({
   microphone: v.boolean(),
   notificationAccess: v.boolean(),
   batteryOptimizationExempt: v.boolean(),
+  trustedDeviceTime: v.boolean(),
 });
 
 export const recordHeartbeat = internalMutation({

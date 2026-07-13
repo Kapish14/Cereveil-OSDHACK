@@ -23,6 +23,7 @@ zxingCore = "3.5.4"
 googleCodeScanner = "16.1.0"
 firebaseBom = "34.15.0"
 workManager = "2.11.1"
+playServicesMaps = "20.0.0"
 
 [libraries]
 androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "androidxCore" }
@@ -58,6 +59,7 @@ google-code-scanner = { module = "com.google.android.gms:play-services-code-scan
 firebase-bom = { module = "com.google.firebase:firebase-bom", version.ref = "firebaseBom" }
 firebase-messaging = { module = "com.google.firebase:firebase-messaging" }
 androidx-work-runtime-ktx = { module = "androidx.work:work-runtime-ktx", version.ref = "workManager" }
+play-services-maps = { module = "com.google.android.gms:play-services-maps", version.ref = "playServicesMaps" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "androidGradlePlugin" }

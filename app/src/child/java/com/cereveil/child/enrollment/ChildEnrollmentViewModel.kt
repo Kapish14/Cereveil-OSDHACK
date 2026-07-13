@@ -34,6 +34,7 @@ class ChildEnrollmentViewModel(application: Application) : AndroidViewModel(appl
     val enrolled = store.load()
     if (enrolled != null) {
       ChildSupervisionWork.schedule(application, enrolled.activeEnrollmentId)
+      ChildSupervisionWork.enqueueNow(application)
       viewModelScope.launch {
         mutableState.value = coordinator.resume(enrolled)
         pushTokenRegistrar.registerPending()
@@ -67,7 +68,10 @@ class ChildEnrollmentViewModel(application: Application) : AndroidViewModel(appl
       mutableState.value = ChildEnrollmentUiState.Enrolling
       mutableState.value = coordinator.complete(preview.payload)
       if (mutableState.value is ChildEnrollmentUiState.Enrolled) {
-        store.load()?.let { ChildSupervisionWork.schedule(getApplication(), it.activeEnrollmentId) }
+        store.load()?.let {
+          ChildSupervisionWork.schedule(getApplication(), it.activeEnrollmentId)
+          ChildSupervisionWork.enqueueNow(getApplication())
+        }
         pushTokenRegistrar.registerPending()
       }
     }

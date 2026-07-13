@@ -7,6 +7,7 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
+import android.location.LocationManager
 import androidx.core.content.ContextCompat
 
 class AndroidProtectionCapabilities(private val context: Context) {
@@ -24,14 +25,18 @@ class AndroidProtectionCapabilities(private val context: Context) {
     )
     val foregroundLocation = granted(Manifest.permission.ACCESS_FINE_LOCATION)
     val backgroundLocation = Build.VERSION.SDK_INT < 29 || granted(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+    val locationManager = context.getSystemService(LocationManager::class.java)
+    val trustedDeviceTime = Settings.Global.getInt(context.contentResolver, Settings.Global.AUTO_TIME, 0) == 1 &&
+      Settings.Global.getInt(context.contentResolver, Settings.Global.AUTO_TIME_ZONE, 0) == 1
     return ChildCapabilities(
       accessibilityService = accessibilityServices.contains(packageName, ignoreCase = true),
       usageAccess = usageMode == AppOpsManager.MODE_ALLOWED,
-      location = foregroundLocation && backgroundLocation,
+      location = foregroundLocation && backgroundLocation && locationManager.isLocationEnabled,
       microphone = granted(Manifest.permission.RECORD_AUDIO),
       notificationAccess =
         Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU || granted(Manifest.permission.POST_NOTIFICATIONS),
       batteryOptimizationExempt = powerManager.isIgnoringBatteryOptimizations(packageName),
+      trustedDeviceTime = trustedDeviceTime,
     )
   }
 

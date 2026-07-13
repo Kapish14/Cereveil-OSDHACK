@@ -1,0 +1,3 @@
+# Use the standard Google Maps Android SDK
+
+Guardian Mode will render the latest Child location with the standard Google Maps SDK for Android, using one marker, an accuracy circle, freshness, and status UI. Cereveil will not initially enable Places, Routes, Street View, advanced map IDs, reverse geocoding, or other separately billable map services; the SDK key will be supplied outside Git and restricted by Android package name and development or production signing-certificate fingerprints. This accepts a billing-enabled Google Cloud project and provider dependency in exchange for a supported Android map experience, while keeping the first slice within the currently no-cost standard Maps SDK SKU.

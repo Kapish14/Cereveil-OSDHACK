@@ -336,9 +336,17 @@ Owns Safety Alerts and weekly Safety Incident Summaries.
 
 Owns Access Requests and Access Grants.
 
+### `modules/appCatalog`
+
+Owns latest-only installed user-launchable app reconciliation for Guardian app selection.
+
+### `modules/location`
+
+Owns latest Location State, Location Heartbeats, one-time Location Refresh Requests, and their cleanup.
+
 ### `modules/screenTime`
 
-Owns daily Screen Time Summary upload, policy-controlled deletion, and 30-day retention.
+Owns Screen Time Refresh Requests, bounded snapshot staging, atomic latest-only publication, local-midnight expiry, and policy-controlled deletion.
 
 ### `modules/remoteAudio`
 

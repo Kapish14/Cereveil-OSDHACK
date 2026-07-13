@@ -12,6 +12,8 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.put
+import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.add
 
 class HttpChildDeviceIdentityClient(convexSiteUrl: String) : ChildDeviceIdentityClient {
   private val siteUrl = convexSiteUrl.removeSuffix("/")
@@ -36,7 +38,7 @@ class HttpChildDeviceIdentityClient(convexSiteUrl: String) : ChildDeviceIdentity
     put("installationId", installationId)
     deviceLabel?.let { put("deviceLabel", it) }
     put("appBuild", appBuild)
-    put("supportedPolicySchemaVersion", 1)
+    put("supportedPolicySchemaVersion", 2)
   }).map { value ->
     ChildEnrollmentCompletion(
       childDeviceId = value.string("childDeviceId"),
@@ -67,7 +69,7 @@ class HttpChildDeviceIdentityClient(convexSiteUrl: String) : ChildDeviceIdentity
 
   override suspend fun heartbeat(accessJwt: String, capabilities: ChildCapabilities) =
     request("/child/heartbeat", accessJwt, buildJsonObject {
-      put("supportedPolicySchemaVersion", 1)
+      put("supportedPolicySchemaVersion", 2)
       put("capabilities", buildJsonObject {
         put("accessibilityService", capabilities.accessibilityService)
         put("usageAccess", capabilities.usageAccess)
@@ -75,6 +77,7 @@ class HttpChildDeviceIdentityClient(convexSiteUrl: String) : ChildDeviceIdentity
         put("microphone", capabilities.microphone)
         put("notificationAccess", capabilities.notificationAccess)
         put("batteryOptimizationExempt", capabilities.batteryOptimizationExempt)
+        put("trustedDeviceTime", capabilities.trustedDeviceTime)
       })
     }).unit()
 
@@ -97,8 +100,9 @@ class HttpChildDeviceIdentityClient(convexSiteUrl: String) : ChildDeviceIdentity
             ChildDeviceCommand(
               commandId = command.string("commandId"),
               type = command.string("type"),
-              policyVersion = command.int("policyVersion"),
+              policyVersion = command["policyVersion"]?.jsonPrimitive?.content?.toIntOrNull(),
               expiresAt = command.long("expiresAt"),
+              referenceId = command["referenceId"]?.jsonPrimitive?.content,
             )
           }
           cursor = result.value.string("continueCursor")
@@ -114,6 +118,92 @@ class HttpChildDeviceIdentityClient(convexSiteUrl: String) : ChildDeviceIdentity
       put("commandId", commandId)
       put("reason", reason)
     }).unit()
+
+  override suspend fun acknowledgeCommand(accessJwt: String, commandId: String) =
+    request("/child/commands/acknowledge", accessJwt, buildJsonObject { put("commandId", commandId) }).unit()
+
+  override suspend fun syncAppCatalog(accessJwt: String, apps: List<ChildAppCatalogEntry>): ChildEnrollmentResult<Unit> {
+    val started = request("/child/app-catalog/generations/start", accessJwt, buildJsonObject {
+      put("expectedCount", apps.size)
+    })
+    if (started is ChildEnrollmentResult.Failure) return started
+    val generationId = (started as ChildEnrollmentResult.Success).value.string("generationId")
+    for (batch in apps.chunked(50)) {
+      val uploaded = request("/child/app-catalog/generations/batch", accessJwt, buildJsonObject {
+        put("generationId", generationId)
+        put("apps", buildJsonArray { batch.forEach { app -> add(buildJsonObject {
+          put("packageName", app.packageName); put("label", app.label)
+        }) } })
+      })
+      if (uploaded is ChildEnrollmentResult.Failure) return uploaded
+    }
+    return request("/child/app-catalog/generations/complete", accessJwt, buildJsonObject {
+      put("generationId", generationId)
+    }).unit()
+  }
+
+  override suspend fun fetchAccessGrants(accessJwt: String): ChildEnrollmentResult<List<ChildAccessGrant>> =
+    request("/child/access-grants", accessJwt).map { value ->
+      value["grants"]!!.jsonArray.map { item -> item.jsonObject.let {
+        ChildAccessGrant(it.string("grantId"), it.string("packageName"), it.long("startsAt"), it.long("expiresAt"))
+      } }
+    }
+
+  override suspend fun uploadLocation(
+    accessJwt: String,
+    measurement: ChildLocationMeasurement,
+    refreshRequestId: String?,
+  ) = request("/child/location", accessJwt, buildJsonObject {
+    put("latitude", measurement.latitude); put("longitude", measurement.longitude)
+    put("accuracyMeters", measurement.accuracyMeters); put("capturedAt", measurement.capturedAt)
+    refreshRequestId?.let { put("refreshRequestId", it) }
+  }).unit()
+
+  override suspend fun failLocationRefresh(accessJwt: String, refreshRequestId: String, reason: String) =
+    request("/child/location/refresh/fail", accessJwt, buildJsonObject {
+      put("refreshRequestId", refreshRequestId); put("reason", reason)
+    }).unit()
+
+  override suspend fun uploadScreenTime(
+    accessJwt: String,
+    refreshRequestId: String,
+    measuredAt: Long,
+    localDayStart: Long,
+    validUntil: Long,
+    rows: List<ChildScreenTimeRow>,
+  ): ChildEnrollmentResult<Unit> {
+    val started = request("/child/screen-time/snapshots/start", accessJwt, buildJsonObject {
+      put("refreshRequestId", refreshRequestId); put("expectedCount", rows.size)
+      put("measuredAt", measuredAt); put("localDayStart", localDayStart); put("validUntil", validUntil)
+    })
+    if (started is ChildEnrollmentResult.Failure) return started
+    val snapshotId = (started as ChildEnrollmentResult.Success).value.string("snapshotId")
+    for (batch in rows.chunked(50)) {
+      val uploaded = request("/child/screen-time/snapshots/batch", accessJwt, buildJsonObject {
+        put("snapshotId", snapshotId)
+        put("rows", buildJsonArray { batch.forEach { row -> add(buildJsonObject {
+          put("packageName", row.packageName); put("totalTimeInForegroundMs", row.totalTimeInForegroundMs)
+        }) } })
+      })
+      if (uploaded is ChildEnrollmentResult.Failure) return uploaded
+    }
+    return request("/child/screen-time/snapshots/complete", accessJwt, buildJsonObject {
+      put("snapshotId", snapshotId)
+    }).unit()
+  }
+
+  override suspend fun createAccessRequest(
+    accessJwt: String,
+    packageName: String,
+    appliedPolicyVersion: Int,
+    blockKind: String,
+    scheduledCoverageEnd: Long?,
+  ) = request("/child/access-requests", accessJwt, buildJsonObject {
+    put("packageName", packageName)
+    put("appliedPolicyVersion", appliedPolicyVersion)
+    put("blockKind", blockKind)
+    scheduledCoverageEnd?.let { put("scheduledCoverageEnd", it) }
+  }).unit()
 
   override suspend fun createTokenChallenge(credentialId: String) =
     request("/device-identity/token/challenge", body = buildJsonObject { put("credentialId", credentialId) })

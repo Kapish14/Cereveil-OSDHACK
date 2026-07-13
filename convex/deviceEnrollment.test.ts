@@ -1,4 +1,4 @@
-import { GenericMutationCtx } from "convex/server";
+import { FunctionReference, GenericMutationCtx, makeFunctionReference } from "convex/server";
 import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { api } from "./_generated/api";
@@ -19,6 +19,12 @@ const updateScreenTimeSummaries = api.modules.policies.guardian.updateScreenTime
 const updateSafeBrowsing = api.modules.policies.guardian.updateSafeBrowsing;
 const updateAppBlocking = api.modules.policies.guardian.updateAppBlocking;
 const updateActiveScreenSafety = api.modules.policies.guardian.updateActiveScreenSafety;
+const updateLocationSharing = api.modules.policies.guardian.updateLocationSharing;
+const updateScreenTime = api.modules.policies.guardian.updateScreenTime;
+const getLatestLocation = api.modules.location.guardian.getLatestLocation;
+const getOrRequestScreenTime = api.modules.screenTime.guardian.getOrRequestScreenTime;
+const listPendingAccessRequests = api.modules.access.guardian.listPendingAccessRequests;
+const resolveAccessRequest = api.modules.access.guardian.resolveAccessRequest;
 
 const identity = {
   tokenIdentifier: "https://clerk.example|guardian_enrollment",
@@ -405,11 +411,12 @@ describe("Enrolled Child Device APIs", () => {
     expect(policyResponse.headers.get("x-request-id")).toMatch(/^[0-9a-f-]{36}$/);
     expect(await policyResponse.json()).toMatchObject({
       version: 1,
-      schemaVersion: 1,
-      appBlocking: { enabled: false },
+      schemaVersion: 2,
+      appBlocking: { enabled: false, rules: [] },
       safeBrowsing: { enabled: false, safeSearchEnabled: false },
       activeScreenSafety: { enabled: false },
-      screenTimeSummariesEnabled: false,
+      locationSharing: { enabled: false },
+      screenTime: { enabled: false },
     });
 
     const ackResponse = await childRequest(
@@ -425,7 +432,7 @@ describe("Enrolled Child Device APIs", () => {
       "/child/heartbeat",
       enrolled.body.accessJwt,
       {
-        supportedPolicySchemaVersion: 1,
+        supportedPolicySchemaVersion: 2,
         capabilities: {
           accessibilityService: true,
           usageAccess: true,
@@ -433,6 +440,7 @@ describe("Enrolled Child Device APIs", () => {
           microphone: true,
           notificationAccess: true,
           batteryOptimizationExempt: true,
+          trustedDeviceTime: true,
         },
       },
     );
@@ -480,8 +488,8 @@ describe("Enrolled Child Device APIs", () => {
     };
     const changed = await enrolled.t.withIdentity(identity).mutation(updateScreenTimeSummaries, args);
     expect(changed).toMatchObject({
-      desiredPolicy: { version: 2, schemaVersion: 1, screenTimeSummariesEnabled: true },
-      appliedPolicy: { version: 1, screenTimeSummariesEnabled: false },
+      desiredPolicy: { version: 2, schemaVersion: 2, screenTime: { enabled: true } },
+      appliedPolicy: { version: 1, screenTime: { enabled: false } },
       applicationStatus: "pending",
     });
     const replay = await enrolled.t.withIdentity(identity).mutation(updateScreenTimeSummaries, args);
@@ -496,7 +504,7 @@ describe("Enrolled Child Device APIs", () => {
       expect.objectContaining({ policyVersion: 2 }),
     ]);
     const fetched = await childRequest(enrolled.t, "/child/policy", enrolled.body.accessJwt);
-    expect(await fetched.json()).toMatchObject({ version: 2, screenTimeSummariesEnabled: true });
+    expect(await fetched.json()).toMatchObject({ version: 2, screenTime: { enabled: true } });
     await childRequest(enrolled.t, "/child/policy/acknowledge", enrolled.body.accessJwt, {
       appliedPolicyVersion: 2,
     });
@@ -624,7 +632,7 @@ describe("Enrolled Child Device APIs", () => {
       enrolled.t,
       "/child/heartbeat",
       enrolled.body.accessJwt,
-      { supportedPolicySchemaVersion: 1, capabilities: {} },
+      { supportedPolicySchemaVersion: 2, capabilities: {} },
     );
     expect(invalid.status).toBe(400);
     expect(await invalid.json()).toEqual({ code: "VALIDATION_FAILED" });
@@ -655,9 +663,10 @@ describe("Enrolled Child Device APIs", () => {
       microphone: true,
       notificationAccess: true,
       batteryOptimizationExempt: true,
+      trustedDeviceTime: true,
     };
     for (let index = 0; index < 2; index += 1) {
-      const response = await childRequest(enrolled.t, "/child/heartbeat", enrolled.body.accessJwt, { supportedPolicySchemaVersion: 1, capabilities });
+      const response = await childRequest(enrolled.t, "/child/heartbeat", enrolled.body.accessJwt, { supportedPolicySchemaVersion: 2, capabilities });
       expect(response.status).toBe(200);
     }
     let notices = await enrolled.t.run(async (ctx: MutationCtx) =>
@@ -675,7 +684,7 @@ describe("Enrolled Child Device APIs", () => {
       });
     });
     const recovered = await childRequest(enrolled.t, "/child/heartbeat", enrolled.body.accessJwt, {
-      supportedPolicySchemaVersion: 1,
+      supportedPolicySchemaVersion: 2,
       capabilities: { ...capabilities, accessibilityService: true },
     });
     expect(recovered.status).toBe(200);
@@ -684,7 +693,7 @@ describe("Enrolled Child Device APIs", () => {
     );
     expect(notices.filter((notice) => notice.type === "recovery")).toHaveLength(1);
 
-    await childRequest(enrolled.t, "/child/heartbeat", enrolled.body.accessJwt, { supportedPolicySchemaVersion: 1, capabilities });
+    await childRequest(enrolled.t, "/child/heartbeat", enrolled.body.accessJwt, { supportedPolicySchemaVersion: 2, capabilities });
     notices = await enrolled.t.run(async (ctx: MutationCtx) =>
       await ctx.db.query("guardianNotices").collect(),
     );
@@ -795,7 +804,245 @@ describe("Enrolled Child Device APIs", () => {
   });
 });
 
-async function enrolledChild() {
+describe("Latest App Catalog", () => {
+  beforeEach(() => {
+    process.env.CHILD_DEVICE_JWT_SECRET = "test-only-child-jwt-secret-with-at-least-32-bytes";
+  });
+
+  test("publishes one complete Child catalog for the Guardian", async () => {
+    const enrolled = await enrolledChild();
+
+    const started = await childRequest(
+      enrolled.t,
+      "/child/app-catalog/generations/start",
+      enrolled.body.accessJwt,
+      { expectedCount: 2 },
+    );
+    expect(started.status).toBe(200);
+    const { generationId } = await started.json() as { generationId: string };
+
+    expect((await childRequest(
+      enrolled.t,
+      "/child/app-catalog/generations/batch",
+      enrolled.body.accessJwt,
+      {
+        generationId,
+        apps: [
+          { packageName: "com.example.reader", label: "Reader" },
+          { packageName: "com.example.math", label: "Math Practice" },
+        ],
+      },
+    )).status).toBe(200);
+    expect((await childRequest(
+      enrolled.t,
+      "/child/app-catalog/generations/complete",
+      enrolled.body.accessJwt,
+      { generationId },
+    )).status).toBe(200);
+
+    const getLatestAppCatalog = makeFunctionReference<"query", {
+      guardianInstallationId: string;
+      childProfileId: string;
+    }, {
+      syncedAt: number;
+      apps: Array<{ packageName: string; label: string }>;
+    }>("modules/appCatalog/guardian:getLatestAppCatalog") as FunctionReference<
+      "query",
+      "public",
+      { guardianInstallationId: string; childProfileId: string },
+      { syncedAt: number; apps: Array<{ packageName: string; label: string }> }
+    >;
+    const catalog = await enrolled.t.withIdentity(identity).query(getLatestAppCatalog, {
+      guardianInstallationId: bootstrapArgs.guardianInstallationId,
+      childProfileId: enrolled.child.childProfileId,
+    });
+
+    expect(catalog.apps).toEqual([
+      { packageName: "com.example.math", label: "Math Practice" },
+      { packageName: "com.example.reader", label: "Reader" },
+    ]);
+    expect(catalog.syncedAt).toEqual(expect.any(Number));
+  });
+});
+
+describe("Supervision Policy schema v2", () => {
+  beforeEach(() => {
+    process.env.CHILD_DEVICE_JWT_SECRET = "test-only-child-jwt-secret-with-at-least-32-bytes";
+  });
+
+  test("enrolls with truthful App Blocking, Location Sharing, and Screen Time sections", async () => {
+    const enrolled = await enrolledChild(2);
+    const response = await childRequest(enrolled.t, "/child/policy", enrolled.body.accessJwt);
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      version: 1,
+      schemaVersion: 2,
+      appBlocking: { enabled: false, rules: [] },
+      locationSharing: { enabled: false },
+      screenTime: { enabled: false },
+    });
+  });
+
+  test("creates the first Manual Block as one pending complete policy change", async () => {
+    const enrolled = await enrolledChild(2);
+    const updateAppBlockingRules = makeFunctionReference<"mutation", {
+      guardianInstallationId: string;
+      childProfileId: string;
+      expectedCurrentVersion: number;
+      operationId: string;
+      rules: Array<{
+        packageName: string;
+        manualBlocked: boolean;
+        schedules: Array<{
+          scheduleId: string;
+          weekdays: number[];
+          startMinute: number;
+          endMinute: number;
+        }>;
+      }>;
+    }, {
+      desiredPolicy: { version: number; appBlocking: { enabled: boolean; rules: unknown[] } };
+      applicationStatus: string;
+    }>("modules/policies/guardian:updateAppBlockingRules") as FunctionReference<
+      "mutation",
+      "public",
+      {
+        guardianInstallationId: string;
+        childProfileId: string;
+        expectedCurrentVersion: number;
+        operationId: string;
+        rules: Array<{
+          packageName: string;
+          manualBlocked: boolean;
+          schedules: Array<{
+            scheduleId: string;
+            weekdays: number[];
+            startMinute: number;
+            endMinute: number;
+          }>;
+        }>;
+      },
+      {
+        desiredPolicy: { version: number; appBlocking: { enabled: boolean; rules: unknown[] } };
+        applicationStatus: string;
+      }
+    >;
+
+    const state = await enrolled.t.withIdentity(identity).mutation(updateAppBlockingRules, {
+      guardianInstallationId: bootstrapArgs.guardianInstallationId,
+      childProfileId: enrolled.child.childProfileId,
+      expectedCurrentVersion: 1,
+      operationId: "manual-block-reader-0001",
+      rules: [{ packageName: "com.example.reader", manualBlocked: true, schedules: [] }],
+    });
+
+    expect(state).toMatchObject({
+      desiredPolicy: {
+        version: 2,
+        appBlocking: {
+          enabled: true,
+          rules: [{ packageName: "com.example.reader", manualBlocked: true, schedules: [] }],
+        },
+      },
+      applicationStatus: "pending",
+    });
+  });
+});
+
+describe("Latest-only feature convergence", () => {
+  beforeEach(() => {
+    process.env.CHILD_DEVICE_JWT_SECRET = "test-only-child-jwt-secret-with-at-least-32-bytes";
+  });
+
+  test("publishes newer location, atomic screen time, and absolute access grants", async () => {
+    const enrolled = await enrolledChild(2);
+    const guardianArgs = {
+      guardianInstallationId: bootstrapArgs.guardianInstallationId,
+      childProfileId: enrolled.child.childProfileId,
+    };
+    await enrolled.t.withIdentity(identity).mutation(updateLocationSharing, {
+      ...guardianArgs, expectedCurrentVersion: 1, operationId: "enable-location-0001", enabled: true,
+    });
+    await enrolled.t.withIdentity(identity).mutation(updateScreenTime, {
+      ...guardianArgs, expectedCurrentVersion: 2, operationId: "enable-screen-time-0001", enabled: true,
+    });
+    const updateRules = makeFunctionReference<"mutation">(
+      "modules/policies/guardian:updateAppBlockingRules",
+    ) as FunctionReference<"mutation", "public", any, any>;
+    await enrolled.t.withIdentity(identity).mutation(updateRules, {
+      ...guardianArgs,
+      expectedCurrentVersion: 3,
+      operationId: "enable-block-reader-0001",
+      rules: [{ packageName: "com.example.reader", manualBlocked: true, schedules: [] }],
+    });
+    await childRequest(enrolled.t, "/child/policy/acknowledge", enrolled.body.accessJwt, {
+      appliedPolicyVersion: 4,
+    });
+    await childRequest(enrolled.t, "/child/heartbeat", enrolled.body.accessJwt, {
+      supportedPolicySchemaVersion: 2,
+      capabilities: {
+        accessibilityService: true, usageAccess: true, location: true, microphone: true,
+        notificationAccess: true, batteryOptimizationExempt: true, trustedDeviceTime: true,
+      },
+    });
+
+    const catalogStart = await childRequest(enrolled.t, "/child/app-catalog/generations/start", enrolled.body.accessJwt, {
+      expectedCount: 1,
+    });
+    const generationId = (await catalogStart.json()).generationId;
+    await childRequest(enrolled.t, "/child/app-catalog/generations/batch", enrolled.body.accessJwt, {
+      generationId, apps: [{ packageName: "com.example.reader", label: "Reader" }],
+    });
+    await childRequest(enrolled.t, "/child/app-catalog/generations/complete", enrolled.body.accessJwt, { generationId });
+
+    const capturedAt = Date.now();
+    expect((await childRequest(enrolled.t, "/child/location", enrolled.body.accessJwt, {
+      latitude: 12.9, longitude: 77.6, accuracyMeters: 18, capturedAt,
+    })).status).toBe(200);
+    await childRequest(enrolled.t, "/child/location", enrolled.body.accessJwt, {
+      latitude: 1, longitude: 2, accuracyMeters: 100, capturedAt: capturedAt - 1,
+    });
+    const location = await enrolled.t.withIdentity(identity).query(getLatestLocation, guardianArgs);
+    expect(location.location).toMatchObject({ latitude: 12.9, longitude: 77.6, capturedAt });
+
+    const requested = await enrolled.t.withIdentity(identity).mutation(getOrRequestScreenTime, guardianArgs);
+    expect(requested.snapshot).toBeNull();
+    const refreshRequestId = requested.refresh!.requestId;
+    const measuredAt = Date.now();
+    const started = await childRequest(enrolled.t, "/child/screen-time/snapshots/start", enrolled.body.accessJwt, {
+      refreshRequestId, expectedCount: 1, measuredAt,
+      localDayStart: measuredAt - 60 * 60 * 1000, validUntil: measuredAt + 60 * 60 * 1000,
+    });
+    const snapshotId = (await started.json()).snapshotId;
+    expect((await enrolled.t.withIdentity(identity).mutation(getOrRequestScreenTime, guardianArgs)).snapshot).toBeNull();
+    await childRequest(enrolled.t, "/child/screen-time/snapshots/batch", enrolled.body.accessJwt, {
+      snapshotId, rows: [{ packageName: "com.example.reader", totalTimeInForegroundMs: 123_000 }],
+    });
+    await childRequest(enrolled.t, "/child/screen-time/snapshots/complete", enrolled.body.accessJwt, { snapshotId });
+    const screen = await enrolled.t.withIdentity(identity).mutation(getOrRequestScreenTime, guardianArgs);
+    expect(screen.snapshot?.apps).toEqual([
+      { packageName: "com.example.reader", label: "Reader", totalTimeInForegroundMs: 123_000 },
+    ]);
+
+    expect((await childRequest(enrolled.t, "/child/access-requests", enrolled.body.accessJwt, {
+      packageName: "com.example.reader", appliedPolicyVersion: 4, blockKind: "manual",
+    })).status).toBe(200);
+    const pending = await enrolled.t.withIdentity(identity).query(listPendingAccessRequests, guardianArgs);
+    expect(pending).toHaveLength(1);
+    const resolution = await enrolled.t.withIdentity(identity).mutation(resolveAccessRequest, {
+      guardianInstallationId: bootstrapArgs.guardianInstallationId,
+      requestId: pending[0].requestId,
+      decision: "approve",
+      durationMinutes: 15,
+    });
+    expect(resolution.status).toBe("approved");
+    const grants = await childRequest(enrolled.t, "/child/access-grants", enrolled.body.accessJwt);
+    expect((await grants.json()).grants[0]).toMatchObject({ packageName: "com.example.reader" });
+  });
+});
+
+async function enrolledChild(supportedPolicySchemaVersion = 2) {
   const t = backend();
   const child = await preparedGuardian(t);
   const code = await t.withIdentity(identity).mutation(createEnrollmentCode, {
@@ -803,7 +1050,7 @@ async function enrolledChild() {
     childProfileId: child.childProfileId,
   });
   const proof = await enrollmentProof(code.code);
-  const response = await completeEnrollment(t, code.code, proof);
+  const response = await completeEnrollment(t, code.code, proof, supportedPolicySchemaVersion);
   expect(response.status).toBe(200);
   return { t, child, proof, body: await response.json() };
 }
@@ -848,6 +1095,7 @@ async function completeEnrollment(
   t: ReturnType<typeof backend>,
   code: string,
   proof: { publicKeySpki: string; proof: string },
+  supportedPolicySchemaVersion = 2,
 ) {
   return await t.fetch("/device-identity/enrollment/complete", {
     method: "POST",
@@ -859,7 +1107,7 @@ async function completeEnrollment(
       installationId: "child-installation-1",
       deviceLabel: "Pixel 7a",
       appBuild: "child-debug-1",
-      supportedPolicySchemaVersion: 1,
+      supportedPolicySchemaVersion,
     }),
   });
 }

@@ -98,7 +98,13 @@ export const getDeliveryTargets = internalQuery({
           .take(10);
         targets.push(...tokens.filter((token) => token.status === "active"));
       }
-      return { category: "guardian_notice" as const, priority: notice.type === "tamper" ? "high" as const : "normal" as const, targets };
+      return {
+        category: "guardian_notice" as const,
+        priority: notice.type === "tamper" || notice.type === "access_request"
+          ? "high" as const
+          : "normal" as const,
+        targets,
+      };
     }
     const commandId = ctx.db.normalizeId("childDeviceCommands", args.recordId);
     if (commandId === null) return null;
@@ -110,7 +116,13 @@ export const getDeliveryTargets = internalQuery({
         q.eq("ownerKind", "childDevice").eq("ownerId", command.childDeviceId),
       )
       .take(10);
-    return { category: "child_command" as const, priority: "normal" as const, targets: tokens.filter((token) => token.status === "active") };
+    return {
+      category: "child_command" as const,
+      priority: command.type === "refresh_location" || command.type === "reconcile_access_grants"
+        ? "high" as const
+        : "normal" as const,
+      targets: tokens.filter((token) => token.status === "active"),
+    };
   },
 });
 

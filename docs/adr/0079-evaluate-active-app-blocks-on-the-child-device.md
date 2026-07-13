@@ -1,0 +1,3 @@
+# Evaluate active App Blocks on the Child Device
+
+Child Mode will be the single evaluator of whether its applied Manual Blocks and Scheduled Blocks are currently effective in the Child Device's local time zone. An Access Request identifies the app, applied policy version, effective block kind, and current Scheduled Block end when applicable; Convex validates the authenticated enrollment and referenced policy rule and bounds any Access Grant by that reported end instead of duplicating local-time and daylight-saving evaluation. A false request cannot grant access without Guardian approval, while a single evaluator prevents backend and enforcement state from disagreeing about local schedule boundaries.

@@ -1,0 +1,3 @@
+# Require automatic device time for time-based supervision
+
+Cereveil will add Android automatic date/time and automatic time zone as required Protection Setup and Supervision Health capabilities. Scheduled Blocks and Screen Time Snapshots continue to follow the Child Device's current local civil time, but disabling either automatic setting produces Protection Degraded and one deduplicated Tamper Alert rather than letting manual clock changes silently alter enforcement windows or current-day boundaries. The settings remain required regardless of which policy features are enabled, consistent with the existing readiness model for Protection Setup capabilities.

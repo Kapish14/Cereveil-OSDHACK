@@ -1,6 +1,8 @@
 import { v } from "convex/values";
 import { paginationOptsValidator } from "convex/server";
-import { internalMutation, internalQuery } from "../../_generated/server";
+import { internalMutation, internalQuery, MutationCtx } from "../../_generated/server";
+import { Id } from "../../_generated/dataModel";
+import { internal } from "../../_generated/api";
 import { throwAppError } from "../../lib/errors";
 import { childDeviceActorValidator, requireActiveChildDeviceActor } from "../deviceIdentity/internal";
 
@@ -18,12 +20,19 @@ export const reconcileCommands = internalQuery({
       )
       .paginate(args.input.paginationOpts);
     return {
-      commands: result.page.map((command) => ({
-        commandId: command._id,
-        type: command.type,
-        policyVersion: command.policyVersion,
-        expiresAt: command.expiresAt,
-      })),
+      commands: result.page.map((command) => command.type === "apply_policy_version"
+        ? {
+            commandId: command._id,
+            type: command.type,
+            policyVersion: command.policyVersion,
+            expiresAt: command.expiresAt,
+          }
+        : {
+            commandId: command._id,
+            type: command.type,
+            referenceId: command.referenceId,
+            expiresAt: command.expiresAt,
+          }),
       continueCursor: result.continueCursor,
       isDone: result.isDone,
     };
@@ -76,6 +85,75 @@ export const rejectCommand = internalMutation({
           updatedAt: args.input.serverNow,
         });
       }
+    }
+    return { ok: true };
+  },
+});
+
+export async function createFeatureCommand(
+  ctx: MutationCtx,
+  args: {
+    householdId: Id<"households">;
+    childProfileId: Id<"childProfiles">;
+    activeEnrollmentId: Id<"activeEnrollments">;
+    childDeviceId: Id<"childDevices">;
+    type: "refresh_location" | "refresh_screen_time" | "reconcile_access_grants";
+    referenceId: string;
+    intentKey: string;
+    serverNow: number;
+    lifetimeMs: number;
+  },
+) {
+  const existing = await ctx.db
+    .query("childDeviceCommands")
+    .withIndex("by_active_enrollment_id_and_intent_key", (q) =>
+      q.eq("activeEnrollmentId", args.activeEnrollmentId).eq("intentKey", args.intentKey),
+    )
+    .order("desc")
+    .take(1);
+  const current = existing.at(0);
+  if (current?.status === "pending") return current._id;
+  const commandId = await ctx.db.insert("childDeviceCommands", {
+    householdId: args.householdId,
+    childProfileId: args.childProfileId,
+    activeEnrollmentId: args.activeEnrollmentId,
+    childDeviceId: args.childDeviceId,
+    type: args.type,
+    referenceId: args.referenceId,
+    intentKey: args.intentKey,
+    status: "pending",
+    createdAt: args.serverNow,
+    updatedAt: args.serverNow,
+    expiresAt: args.serverNow + args.lifetimeMs,
+  });
+  await ctx.scheduler.runAfter(0, internal.fcmDelivery.deliver, {
+    recordKind: "childDeviceCommand",
+    recordId: commandId,
+    attempt: 1,
+  });
+  return commandId;
+}
+
+export const acknowledgeFeatureCommand = internalMutation({
+  args: {
+    actor: childDeviceActorValidator,
+    input: v.object({
+      commandId: v.id("childDeviceCommands"),
+      serverNow: v.number(),
+    }),
+  },
+  handler: async (ctx, args) => {
+    const actor = await requireActiveChildDeviceActor(ctx, args.actor);
+    const command = await ctx.db.get("childDeviceCommands", args.input.commandId);
+    if (command === null || command.activeEnrollmentId !== actor.enrollment._id) {
+      throwAppError("CHILD_DEVICE_UNAUTHORIZED");
+    }
+    if (command.status === "pending") {
+      await ctx.db.patch("childDeviceCommands", command._id, {
+        status: "acknowledged",
+        acknowledgedAt: args.input.serverNow,
+        updatedAt: args.input.serverNow,
+      });
     }
     return { ok: true };
   },

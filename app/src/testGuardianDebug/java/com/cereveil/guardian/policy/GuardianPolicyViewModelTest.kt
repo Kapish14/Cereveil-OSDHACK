@@ -36,16 +36,16 @@ class GuardianPolicyViewModelTest {
     val model = GuardianPolicyViewModel("child-1", client)
     advanceUntilIdle()
 
-    model.update(PolicyFeature.ScreenTimeSummaries, true)
+    model.update(PolicyFeature.ScreenTime, true)
     assertEquals(
-      PolicyFeature.ScreenTimeSummaries,
+      PolicyFeature.ScreenTime,
       (model.state.value as GuardianPolicyUiState.Ready).savingFeature,
     )
     advanceUntilIdle()
 
     val ready = model.state.value as GuardianPolicyUiState.Ready
-    assertEquals(true, ready.policy.desired.screenTimeSummariesEnabled)
-    assertEquals(false, ready.policy.applied?.screenTimeSummariesEnabled)
+    assertEquals(true, ready.policy.desired.screenTimeEnabled)
+    assertEquals(false, ready.policy.applied?.screenTimeEnabled)
     assertEquals(PolicyApplicationStatus.Pending, ready.policy.status)
   }
 
@@ -78,14 +78,14 @@ private class FakePolicyClient(initial: GuardianPolicyState) : GuardianPolicyCli
     safeSearchEnabled: Boolean,
   ): GuardianPolicyResult<GuardianPolicyState> {
     val current = (states.replayCache.single() as GuardianPolicyResult.Success).value
-    val desired = current.desired.copy(screenTimeSummariesEnabled = enabled, version = current.desired.version + 1)
+    val desired = current.desired.copy(screenTimeEnabled = enabled, version = current.desired.version + 1)
     return GuardianPolicyResult.Success(current.copy(desired = desired, status = PolicyApplicationStatus.Pending))
   }
 }
 
 private fun policyState(applied: Boolean, desired: Boolean): GuardianPolicyState {
   fun policy(version: Int, screenTime: Boolean) = GuardianPolicy(
-    version, 1, false, false, false, false, screenTime,
+    version, 2, false, false, false, false, false, screenTime,
   )
   return GuardianPolicyState(
     desired = policy(if (desired == applied) 1 else 2, desired),

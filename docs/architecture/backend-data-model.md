@@ -35,7 +35,7 @@ Meanings:
 - `endedAt`: when a session or supervision flow completed.
 - `status`: current domain lifecycle state.
 
-Rows such as Safety Alerts, Screen Time Summaries, Access Requests, Access Grants, commands, signals, and live sessions should generally have `expiresAt`. Long-lived identity and ownership rows generally use `status`, `revokedAt`, or `endedAt` instead.
+Rows such as Safety Alerts, Screen Time Snapshots, refresh requests, Access Requests, Access Grants, commands, and signals should generally have `expiresAt`. Long-lived identity and ownership rows generally use `status`, `revokedAt`, or `endedAt` instead.
 
 ## Tables
 
@@ -333,12 +333,26 @@ Immutable versioned policy state for a Child Profile.
   childProfileId: Id<"childProfiles">,
 
   version: number,
+  schemaVersion: 2,
   status: "active" | "superseded",
 
-  appBlocks: Array<AppBlock>,
+  appBlocking: {
+    enabled: boolean,
+    apps: Array<{
+      packageName: string,
+      manualBlocked: boolean,
+      schedules: Array<{
+        scheduleId: string,
+        daysOfWeek: Array<number>,
+        startLocalMinute: number,
+        endLocalMinute: number,
+      }>,
+    }>,
+  },
   safeBrowsing: SafeBrowsingPolicy,
-  monitoredApps: Array<MonitoredAppPolicy>,
-  screenTimeSummariesEnabled: boolean,
+  activeScreenSafety: ActiveScreenSafetyPolicy,
+  locationSharing: { enabled: boolean },
+  screenTime: { enabled: boolean },
 
   createdByGuardianAccountId: Id<"guardianAccounts">,
   createdAt: number,
@@ -357,7 +371,11 @@ Rules:
 
 - Guardian edits create a new policy version.
 - Old versions are not overwritten.
-- If Screen Time Summaries are disabled, backend deletes existing summaries for that Child Profile and Child Mode stops collecting/uploading them.
+- `appBlocking.apps` contains at most 100 package entries and at most eight schedules per package; Convex validates duplicates, local-minute ranges, day sets, and Exempt Apps.
+- Manual and Scheduled Blocks remain independent and overlapping schedules compose into continuous effective coverage.
+- Creating the first Manual or Scheduled Block while App Blocking is disabled enables the section in the same complete policy version. Disabling the section later preserves its rules, and removing the last rule does not implicitly disable it.
+- If Location Sharing is disabled, backend deletes latest location and pending refresh state and Child Mode stops collecting/uploading location.
+- If Screen Time is disabled, backend deletes the latest snapshot and pending refresh state and Child Mode stops accepting refresh work.
 
 ### `policyApplicationStates`
 
@@ -372,7 +390,8 @@ Tracks what policy the Guardian wants versus what Child Mode has acknowledged.
 
   desiredPolicyVersion: number,
   appliedPolicyVersion?: number,
-  status: "pending" | "applied",
+  status: "pending" | "applied" | "failed",
+  failureReason?: "unsupported_schema" | "invalid_policy" | "activation_failed",
   createdAt: number,
   updatedAt: number,
 }
@@ -388,6 +407,40 @@ by_active_enrollment_id
 Rules:
 
 - If `desiredPolicyVersion > appliedPolicyVersion`, Guardian Mode can show pending application state.
+
+### `appCatalogEntries`
+
+Latest-only user-launchable app presence reported by the active Child Device.
+
+```ts
+{
+  householdId: Id<"households">,
+  childProfileId: Id<"childProfiles">,
+  childDeviceId: Id<"childDevices">,
+  activeEnrollmentId: Id<"activeEnrollments">,
+  packageName: string,
+  displayLabel: string,
+  catalogGeneration: string,
+  syncedAt: number,
+  createdAt: number,
+  updatedAt: number,
+}
+```
+
+Indexes:
+
+```ts
+by_active_enrollment_id_and_package_name
+by_active_enrollment_id_and_catalog_generation
+by_child_profile_id
+```
+
+Rules:
+
+- Accept bounded generation batches, then atomically publish the completed generation and delete rows absent from it in bounded cleanup.
+- Upload immediately after enrollment, reconcile after package add/remove events and restart, and show `syncedAt` freshness in Guardian Mode.
+- Include only package name and device-resolved label for user-launchable apps; exclude icons, permissions, APK metadata, installation timestamps, system components, and Exempt Apps.
+- Removing a catalog entry never removes package-based App Block rules.
 
 ### `guardianNotices`
 
@@ -421,7 +474,7 @@ Rules:
 - Payloads remain minimal and type-specific.
 - Do not store raw content in notices.
 
-### `deviceCommands`
+### `childDeviceCommands`
 
 Authoritative command queue for Child Devices. FCM may wake the device, but command authority lives here.
 
@@ -432,19 +485,19 @@ Authoritative command queue for Child Devices. FCM may wake the device, but comm
   childDeviceId: Id<"childDevices">,
   activeEnrollmentId: Id<"activeEnrollments">,
 
-  type:
-    | "fetch_policy"
-    | "start_live_location"
-    | "stop_live_location"
-    | "start_remote_audio"
-    | "end_remote_audio",
+  command:
+    | { type: "apply_policy_version", policyVersion: number }
+    | { type: "refresh_location", locationRefreshRequestId: Id<"locationRefreshRequests"> }
+    | { type: "refresh_screen_time", screenTimeRefreshRequestId: Id<"screenTimeRefreshRequests"> }
+    | { type: "reconcile_access_grants", accessRequestId: Id<"accessRequests"> },
 
-  sourceId?: string,
-
-  status: "pending" | "delivered" | "acknowledged" | "expired",
+  intentKey: string,
+  status: "pending" | "acknowledged" | "rejected" | "superseded" | "cancelled" | "expired",
   createdAt: number,
+  updatedAt: number,
   expiresAt: number,
   acknowledgedAt?: number,
+  rejectionReason?: string,
 }
 ```
 
@@ -452,6 +505,8 @@ Rules:
 
 - Do not put command authority inside FCM payloads.
 - Devices fetch authoritative command state from Convex.
+- Each variant references feature-owned authoritative state and acknowledges only its type-specific success point.
+- Policy and Screen Time refresh commands use normal-priority FCM; Location Refresh uses high priority with a Child-visible notification; Access Grant approval is high priority when it changes a visible Block Screen.
 
 ### `accessRequests`
 
@@ -465,9 +520,9 @@ Child-initiated temporary access request for a blocked app.
   activeEnrollmentId: Id<"activeEnrollments">,
 
   appPackageName: string,
-  appLabel: string,
-
   policyVersion: number,
+  blockKind: "manual" | "scheduled",
+  scheduledCoverageEndsAt?: number,
 
   status: "pending" | "approved" | "denied" | "expired",
 
@@ -490,6 +545,11 @@ by_expires_at
 Rules:
 
 - If Child Mode is offline, do not queue Access Requests; show the child that Guardian is unreachable.
+- Allow one pending request per enrollment, package, and effective block; repeated taps return the existing request without another Guardian Notice.
+- Expire after 15 minutes or earlier when the effective block, policy eligibility, or Active Enrollment ends.
+- After denial, enforce a five-minute backend-owned cooldown before another request for that app.
+- An unrelated policy version does not invalidate the request when the same effective block remains.
+- Delete terminal rows 24 hours after resolution or expiry.
 
 ### `accessGrants`
 
@@ -524,7 +584,10 @@ by_expires_at
 Rules:
 
 - If an Access Request is denied, no Access Grant is created.
-- Access Grant duration cannot exceed the current scheduled block window.
+- A grant starts at backend approval; delayed FCM, retrieval, process death, and reboot never restart its duration.
+- Manual-block grants last for the selected 15, 30, 45, or 60 minutes. Schedule-only grants cannot exceed the current continuous scheduled coverage.
+- Active grants are non-revocable in v1 and are persisted by Child Mode for offline enforcement until absolute expiry.
+- Delete expired grant rows 24 hours after they cease being valid.
 
 ### `safetyAlerts`
 
@@ -604,9 +667,9 @@ Rules:
 - Retained until the next weekly summary replaces it.
 - Summary does not contain individual incident details or raw content.
 
-### `screenTimeSummaries`
+### `screenTimeRefreshRequests`
 
-Daily per-app aggregate uploaded by Child Mode when enabled by policy.
+Bounded on-demand work that asks Child Mode to replace the latest Screen Time Snapshot.
 
 ```ts
 {
@@ -615,17 +678,11 @@ Daily per-app aggregate uploaded by Child Mode when enabled by policy.
   childDeviceId: Id<"childDevices">,
   activeEnrollmentId: Id<"activeEnrollments">,
 
-  localDate: string,
-  timezone: string,
-
-  appSummaries: Array<{
-    appPackageName: string,
-    appLabel: string,
-    foregroundDurationSeconds: number,
-    sessionCount: number,
-  }>,
-
-  uploadedAt: number,
+  requestedByGuardianAccountId: Id<"guardianAccounts">,
+  status: "requested" | "uploading" | "completed" | "failed" | "expired",
+  requestedAt: number,
+  completedAt?: number,
+  failureReason?: "child_offline" | "usage_access_unavailable" | "upload_failed" | "request_timeout",
   createdAt: number,
   updatedAt: number,
   expiresAt: number,
@@ -635,18 +692,84 @@ Daily per-app aggregate uploaded by Child Mode when enabled by policy.
 Indexes:
 
 ```ts
-by_child_profile_date
+by_child_profile_status
 by_household_id
 by_expires_at
 ```
 
 Rules:
 
-- One summary per local day.
-- Child Mode uploads after local midnight, preferably between `00:15` and `02:00`, or at the next reliable sync.
-- Retain for up to 30 days.
-- Do not store exact app open/close timestamps or a minute-by-minute timeline.
-- If disabled in Supervision Policy, stop collecting/uploading, clear unsent local queues, and delete existing backend summaries for that Child Profile.
+- Create only while the desired and applied schema-v2 policies both enable Screen Time, the Child Device is Online, and Usage Access was last reported available.
+- Allow one pending request per Child Profile, expire it after two minutes, and deduplicate automatic or manual retries during that interval.
+- Use normal-priority FCM through a typed `refresh_screen_time` Child Device Command.
+- Do not queue failed responses; expire partial staging rows and measure again on a later request.
+- Delete terminal request state 15 minutes after completion, failure, or expiry.
+
+### `screenTimeSnapshots`
+
+Header for staging and atomically publishing the latest today-so-far Screen Time state.
+
+```ts
+{
+  householdId: Id<"households">,
+  childProfileId: Id<"childProfiles">,
+  childDeviceId: Id<"childDevices">,
+  activeEnrollmentId: Id<"activeEnrollments">,
+  refreshRequestId: Id<"screenTimeRefreshRequests">,
+
+  status: "uploading" | "current" | "superseded",
+  localDate: string,
+  timezone: string,
+  capturedAt: number,
+  validUntil: number,
+  expectedAppCount: number,
+
+  createdAt: number,
+  updatedAt: number,
+  expiresAt: number,
+}
+```
+
+Indexes:
+
+```ts
+by_child_profile_status
+by_refresh_request_id
+by_expires_at
+```
+
+### `screenTimeAppUsage`
+
+One positive-duration app row belonging to a staged or current Screen Time Snapshot.
+
+```ts
+{
+  householdId: Id<"households">,
+  childProfileId: Id<"childProfiles">,
+  screenTimeSnapshotId: Id<"screenTimeSnapshots">,
+  appPackageName: string,
+  foregroundDurationMs: number,
+  createdAt: number,
+  expiresAt: number,
+}
+```
+
+Indexes:
+
+```ts
+by_screen_time_snapshot_id_and_app_package_name
+by_child_profile_id
+by_expires_at
+```
+
+Rules:
+
+- Child Mode uploads bounded batches containing Android-reported `totalTimeInForeground` only for positive-duration, user-launchable, non-exempt apps.
+- Labels resolve through the latest App Catalog; no session count or raw usage event is uploaded.
+- A completion mutation verifies the expected rows, marks the new header current, and hides the previous header in one transaction; old rows are then deleted in bounded cleanup.
+- The query exposes only the current complete header and rows, never staging or superseded data.
+- The first or re-enabled snapshot covers local midnight through `capturedAt`, including same-day usage from before policy enablement, a disabled interval, or enrollment.
+- A snapshot becomes invalid at `validUntil`, the Child Device's next local midnight, and is also deleted immediately when Screen Time is disabled or supervision ends.
 
 ### `locationState`
 
@@ -659,7 +782,7 @@ Current location state only.
   childDeviceId: Id<"childDevices">,
   activeEnrollmentId: Id<"activeEnrollments">,
 
-  latestHeartbeat?: {
+  latestLocation?: {
     latitude: number,
     longitude: number,
     accuracyMeters: number,
@@ -672,12 +795,16 @@ Current location state only.
 
 Rules:
 
-- Store only the latest Location Heartbeat.
+- Store only the latest Location Heartbeat or successful Location Refresh Request measurement.
+- Accept a measurement only when its `capturedAt` is newer than the stored latest measurement.
+- Do not accept delayed batches or treat backend receipt time as measurement time.
 - Do not retain location history or route timelines.
+- Treat a location older than 30 minutes as stale while retaining and displaying its measured age and accuracy.
+- Delete state immediately when Location Sharing is disabled or supervision ends.
 
-### `liveLocationSessions`
+### `locationRefreshRequests`
 
-Transient high-accuracy location session state.
+Transient one-time high-accuracy location refresh state.
 
 ```ts
 {
@@ -686,19 +813,28 @@ Transient high-accuracy location session state.
   childDeviceId: Id<"childDevices">,
   activeEnrollmentId: Id<"activeEnrollments">,
 
-  status: "requested" | "active" | "ended" | "expired",
+  status: "requested" | "completed" | "failed" | "expired",
 
   requestedByGuardianAccountId: Id<"guardianAccounts">,
   requestedAt: number,
-  startedAt?: number,
-  endedAt?: number,
+  completedAt?: number,
+  failureReason?: "child_offline" | "location_unavailable" | "measurement_timeout",
   expiresAt: number,
 }
 ```
 
 Rules:
 
-- Live Location points are not retained after the session ends.
+- A request expires 60 seconds after creation.
+- Create only while desired and applied policy enable Location Sharing, the Child Device is Online, and location plus notification capabilities were last reported available.
+- Allow one request per Child Profile every two minutes and deduplicate a second Guardian Device or repeated tap.
+- Child Mode attempts one fresh high-accuracy measurement and then returns to normal Location Heartbeats.
+- A successful result must have been captured at or after the request's backend-owned `requestedAt`; a cached earlier point cannot complete the request.
+- Fresh results are retained with their actual `accuracyMeters` rather than rejected or presented as exact solely because accuracy is poor.
+- A successful measurement overwrites `locationState`; no request-specific location point is retained.
+- A failed or expired request leaves the previous latest location unchanged and visibly stale.
+- Use high-priority FCM only with an immediate Child-visible refresh notification.
+- Completed, failed, and expired request rows are deleted 15 minutes after becoming terminal.
 
 ### `remoteAudioSessions`
 

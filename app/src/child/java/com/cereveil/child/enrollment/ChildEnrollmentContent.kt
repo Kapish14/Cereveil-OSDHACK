@@ -84,6 +84,7 @@ fun ChildEnrollmentContent(modifier: Modifier = Modifier, model: ChildEnrollment
             Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:${context.packageName}")),
           )
         },
+        onAutomaticTime = { context.startActivity(Intent(Settings.ACTION_DATE_SETTINGS)) },
         onContinue = model::completeProtectionSetup,
       )
       ChildEnrollmentUiState.ReadyToScan -> {
@@ -148,16 +149,18 @@ private fun ProtectionSetup(
   onBackgroundLocation: () -> Unit,
   onNotifications: () -> Unit,
   onBattery: () -> Unit,
+  onAutomaticTime: () -> Unit,
   onContinue: () -> Unit,
 ) {
-  Text("Protection setup • 6 settings", style = MaterialTheme.typography.labelSmall)
+  Text("Protection setup • 7 settings", style = MaterialTheme.typography.labelSmall)
   CereveilTitle("Set up protection on this phone", "Android asks for each setting separately. Cereveil explains why before opening it.")
   PermissionCard("1", "Accessibility", "Helps apply the app controls your Guardian chooses.", onAccessibility)
-  PermissionCard("2", "App usage", "Lets Cereveil report which apps need attention.", onUsage)
+  PermissionCard("2", "App usage", "Shares the latest launchable app names and today's Android-calculated per-app usage with your Guardian.", onUsage)
   PermissionCard("3", "Location and microphone", "Supports chosen safety features and audio checks.", onLocationAndMic)
   PermissionCard("4", "Allow all-the-time location", "In Android’s app settings, choose Location, then Allow all the time.", onBackgroundLocation)
   PermissionCard("5", "Notifications", "Keeps protection status and important alerts visible.", onNotifications)
   PermissionCard("6", "Battery access", "Helps protection continue reliably in the background.", onBattery)
+  PermissionCard("7", "Automatic date and time", "Keep both automatic time and automatic time zone on so schedules and today's usage stay trustworthy.", onAutomaticTime)
   CereveilNotice("Safe Browsing and VPN access are not part of this hackathon build.")
   CereveilPrimaryButton(text = "Check settings and continue", onClick = onContinue)
 }

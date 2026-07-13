@@ -77,23 +77,31 @@ An authoritative, bounded request for Child Mode to perform or reconcile a devic
 _Avoid_: Supervision Policy, push payload, background job
 
 **Access Request**:
-A Child-initiated request for temporary Guardian-approved use of a blocked app, delivered to every Guardian Device and resolved by the first valid approve or deny response.
+A Child-initiated request for temporary Guardian-approved use of a blocked app, delivered to every Guardian Device and resolved by the first valid approve or deny response. It remains actionable for at most 15 minutes and never beyond the effective block or supervision relationship that produced it.
 _Avoid_: Unlock, bypass
 
 **Access Grant**:
-A Guardian-approved exception to an App Block that expires at the earlier of its selected duration or the end of the current scheduled block. Available durations are 15, 30, 45, or 60 minutes, filtered to those shorter than the remaining block, plus the option to allow access until that block ends.
+A Guardian-approved, non-revocable exception to an App Block that begins when the Guardian approves it. A grant requested under a Manual Block lasts for its selected duration; one requested only under Scheduled Blocks expires at the earlier of that duration or the end of the current continuous scheduled coverage. Delayed delivery, retrieval, process death, or Child Device restart neither cancels nor extends it. Available durations are 15, 30, 45, or 60 minutes, filtered to those shorter than the remaining scheduled coverage, plus the option to allow access until that coverage ends.
 _Avoid_: Permanent unlock, unrestricted access
 
 **App Block**:
-A Supervision Policy rule that prevents a Child from using a selected app by covering it with Cereveil's Block Screen whenever it becomes active.
+A Supervision Policy rule that prevents a Child from using a selected app by covering the display with Cereveil's Block Screen whenever that app owns a visible interactive window, including split-screen and picture-in-picture. Manual Blocks and Scheduled Blocks may overlap for the same app, and the app remains blocked while either kind is active. Its package-based rules survive temporary absence from the App Catalog and resume if that app is reinstalled.
 _Avoid_: App Lock, app disablement
+
+**App Catalog**:
+The latest known set of user-launchable apps installed on a Child Device, identified by package name and device-resolved display label so the Guardian can select apps for supervision. It excludes system components and does not retain installation or removal history.
+_Avoid_: Installed-app history, application inventory log
+
+**Exempt App**:
+An app or system surface that an App Block may never cover, including Cereveil, the active Home app, System UI, current dialer and emergency surfaces, and settings or package-management surfaces required to understand and repair protection state.
+_Avoid_: Allowed app, unmonitored app
 
 **Manual Block**:
 An App Block activated immediately by the Guardian and retained until the Guardian removes it.
 _Avoid_: Permanent block
 
 **Scheduled Block**:
-An App Block activated during configured recurring day-and-time windows.
+An App Block activated during configured recurring day-and-time windows evaluated in the Child Device's current local time zone, including local daylight-saving changes.
 _Avoid_: Downtime, timer
 
 **Safe Browsing**:
@@ -109,27 +117,35 @@ DNS-level mapping that forces a search engine's strict content-filtering mode; s
 _Avoid_: Query inspection, search surveillance
 
 **Location Heartbeat**:
-A low-power update of the Child Device's latest permitted location, carrying the time the location was measured so that stale location is never presented as current. It may accompany a Supervision Heartbeat or follow significant movement, but is not required to establish device liveness.
-_Avoid_: Supervision Heartbeat, live tracking, continuous GPS
+A low-power update of the Child Device's latest permitted location, carrying the time the location was measured so that stale location is never presented as current. It may accompany a Supervision Heartbeat or follow significant movement, but is not required to establish device liveness and is never queued for later delivery while offline.
+_Avoid_: Supervision Heartbeat, Location Refresh Request, live tracking, continuous GPS
+
+**Location Sharing**:
+An explicit Supervision Policy feature that permits Location Heartbeats and Location Refresh Requests for a Child Profile. Disabling it stops collection and removes the latest backend location state without making the Android location capability optional for Supervision Health.
+_Avoid_: Live tracking, location permission
 
 **Supervision Heartbeat**:
 An authenticated Child Device report sent approximately every 15 minutes to establish liveness and report the availability of required protection capabilities without requiring location collection. Capability changes are reflected by the next scheduled report rather than an immediate report.
 _Avoid_: Location Heartbeat, push notification, continuous polling
 
-**Live Location Session**:
-A Guardian-requested period of high-accuracy Child Device location updates every 5–10 seconds for up to 10 minutes.
-_Avoid_: Location Heartbeat, continuous tracking
+**Location Refresh Request**:
+A Guardian-requested attempt to replace an Online Child Device's latest known location with one fresh high-accuracy measurement while its last reported location and notification capabilities are available. It is visible to the Child, completes after one measurement or expires after 60 seconds, never starts continuous tracking, and may be created at most once every two minutes for a Child Profile.
+_Avoid_: Location Heartbeat, Live Location Session, continuous tracking
 
-**Screen Time Summary**:
-A daily per-app aggregate retained for 30 days, containing foreground duration and usage-session count without exact open/close timestamps or a minute-by-minute activity timeline.
-_Avoid_: Activity log, usage timeline
+**Screen Time Snapshot**:
+The latest Guardian-requested view of Android-reported, today-so-far foreground duration per app on a Child Device. It expires at the Child Device's next local midnight and contains no session count, raw usage events, exact open or close timestamps, completed-day summary, or usage history.
+_Avoid_: Screen Time Summary, activity log, usage timeline
+
+**Screen Time Refresh Request**:
+A two-minute request for an Online Child Device with Usage Access available to replace its Screen Time Snapshot using current Android-reported totals. Guardian Mode creates one automatically when that Child Profile's Screen Time surface becomes visible and the existing snapshot is at least two minutes old.
+_Avoid_: Screen Time heartbeat, continuous usage stream
 
 **Block Screen**:
 The Child-facing explanation shown over a blocked app, offering an Access Request action and a route back to the device Home screen.
 _Avoid_: Home redirect, error screen
 
 **Monitored App**:
-An app selected by the Guardian for active-screen safety analysis on the Child Device.
+An app selected by the Guardian for active-screen safety analysis on the Child Device. In v1, one shared selection makes both Scam Text Detection and NSFW Screen Detection eligible while that app is visible.
 _Avoid_: Tracked app, watched app
 
 **Scam Text Detection**:
@@ -207,6 +223,10 @@ _Avoid_: Offline, Fully Protected, Protection Degraded
 **Protection Setup**:
 The single Guardian-completed onboarding checklist that sequentially explains and requests every required Android capability before a Child Device may scan an Enrollment Code.
 _Avoid_: Permission batch, child consent screen
+
+**Trusted Device Time**:
+The protection capability in which Android's automatic date/time and automatic time-zone settings are both enabled, allowing Scheduled Blocks and current-day Screen Time to use the Child Device's local clock without silently trusting manual time manipulation.
+_Avoid_: Guardian time zone, backend clock
 
 **Fully Protected**:
 The last reported protection state in which every capability required by Protection Setup was available; it remains the last known state if the Child Device later becomes Offline.

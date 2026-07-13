@@ -50,7 +50,8 @@ class ConvexGuardianPolicyClient(
       PolicyFeature.AppBlocking -> "modules/policies/guardian:updateAppBlocking"
       PolicyFeature.SafeBrowsing -> "modules/policies/guardian:updateSafeBrowsing"
       PolicyFeature.ActiveScreenSafety -> "modules/policies/guardian:updateActiveScreenSafety"
-      PolicyFeature.ScreenTimeSummaries -> "modules/policies/guardian:updateScreenTimeSummaries"
+      PolicyFeature.LocationSharing -> "modules/policies/guardian:updateLocationSharing"
+      PolicyFeature.ScreenTime -> "modules/policies/guardian:updateScreenTime"
     }
     val args = mutableMapOf<String, Any?>(
       "guardianInstallationId" to installationId,
@@ -109,6 +110,8 @@ private fun Map<String, Any?>.policy(): GuardianPolicy {
   val appBlocking = this["appBlocking"] as Map<String, Any?>
   val safeBrowsing = this["safeBrowsing"] as Map<String, Any?>
   val activeScreenSafety = this["activeScreenSafety"] as Map<String, Any?>
+  val locationSharing = this["locationSharing"] as Map<String, Any?>
+  val screenTime = this["screenTime"] as Map<String, Any?>
   return GuardianPolicy(
     version = (this["version"] as Number).toInt(),
     schemaVersion = (this["schemaVersion"] as Number).toInt(),
@@ -116,7 +119,8 @@ private fun Map<String, Any?>.policy(): GuardianPolicy {
     safeBrowsingEnabled = safeBrowsing["enabled"] as Boolean,
     safeSearchEnabled = safeBrowsing["safeSearchEnabled"] as Boolean,
     activeScreenSafetyEnabled = activeScreenSafety["enabled"] as Boolean,
-    screenTimeSummariesEnabled = this["screenTimeSummariesEnabled"] as Boolean,
+    locationSharingEnabled = locationSharing["enabled"] as Boolean,
+    screenTimeEnabled = screenTime["enabled"] as Boolean,
   )
 }
 

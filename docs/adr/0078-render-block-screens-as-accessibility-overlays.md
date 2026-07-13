@@ -1,0 +1,3 @@
+# Render Block Screens as Accessibility overlays
+
+Child Mode will render its app-owned Block Screen as a full-screen `TYPE_ACCESSIBILITY_OVERLAY` from the disclosed Accessibility service that detects the blocked foreground app. The overlay intercepts interaction with the covered app, exposes only the Child-facing explanation, Access Request, and Home actions, and is removed when the foreground surface is exempt or access becomes valid. This avoids a separate draw-over-other-apps permission and restricted background Activity launches while deliberately coupling real-time App Block enforcement to the required Accessibility capability.

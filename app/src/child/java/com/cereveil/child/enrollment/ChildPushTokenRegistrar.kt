@@ -59,6 +59,7 @@ class ChildFirebaseMessagingService : FirebaseMessagingService() {
           ChildDeviceTokenProvider(client, AndroidChildDeviceKeyStore(), store).refresh()
         },
         runtime = AndroidPolicyControlledRuntime(this@ChildFirebaseMessagingService),
+        featureProcessor = AndroidChildFeatureCommandProcessor(this@ChildFirebaseMessagingService, client),
       ).sync()
     }
   }
