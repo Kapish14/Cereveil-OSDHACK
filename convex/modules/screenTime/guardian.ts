@@ -1,4 +1,5 @@
 import { v } from "convex/values";
+import { internal } from "../../_generated/api";
 import { guardianMutation } from "../../lib/functionWrappers";
 import { requireGuardianForChildProfile } from "../../lib/authorize";
 import { throwAppError } from "../../lib/errors";
@@ -44,6 +45,13 @@ export const getOrRequestScreenTime = guardianMutation({
       ).unique();
     const needsRefresh = current === null || current.validUntil <= serverNow || current.measuredAt + FRESH_FOR_MS <= serverNow;
     if (needsRefresh && (request === null || request.expiresAt <= serverNow)) {
+      if (request !== null) {
+        await ctx.db.patch("screenTimeRefreshRequests", request._id, {
+          status: "expired",
+          completedAt: serverNow,
+          purgeAt: serverNow + TERMINAL_RETENTION_MS,
+        });
+      }
       const requestId = await ctx.db.insert("screenTimeRefreshRequests", {
         householdId: actor.householdId,
         childProfileId: args.childProfileId,
@@ -66,6 +74,10 @@ export const getOrRequestScreenTime = guardianMutation({
         lifetimeMs: REFRESH_LIFETIME_MS,
       });
       request = await ctx.db.get("screenTimeRefreshRequests", requestId);
+      await ctx.scheduler.runAt(serverNow + REFRESH_LIFETIME_MS, internal.modules.screenTime.internal.expireRefresh, {
+        requestId,
+        serverNow: serverNow + REFRESH_LIFETIME_MS,
+      });
     }
     const rows = current === null || current.validUntil <= serverNow
       ? []

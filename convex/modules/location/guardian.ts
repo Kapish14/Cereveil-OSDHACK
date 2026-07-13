@@ -21,16 +21,15 @@ export const getLatestLocation = guardianQuery({
       )
       .unique();
     if (enrollment === null) return { location: null, refresh: null, serverNow: Date.now() };
-    const [location, pending] = await Promise.all([
+    const [location, refreshRows] = await Promise.all([
       ctx.db.query("latestLocationStates")
         .withIndex("by_active_enrollment_id", (q) => q.eq("activeEnrollmentId", enrollment._id))
         .unique(),
       ctx.db.query("locationRefreshRequests")
-        .withIndex("by_active_enrollment_id_and_status", (q) =>
-          q.eq("activeEnrollmentId", enrollment._id).eq("status", "pending"),
-        )
-        .unique(),
+        .withIndex("by_child_profile_id_and_requested_at", (q) => q.eq("childProfileId", args.childProfileId))
+        .order("desc").take(1),
     ]);
+    const refresh = refreshRows.at(0);
     return {
       location: location === null ? null : {
         latitude: location.latitude,
@@ -38,10 +37,12 @@ export const getLatestLocation = guardianQuery({
         accuracyMeters: location.accuracyMeters,
         capturedAt: location.capturedAt,
       },
-      refresh: pending === null ? null : {
-        requestId: pending._id,
-        requestedAt: pending.requestedAt,
-        expiresAt: pending.expiresAt,
+      refresh: refresh === undefined ? null : {
+        requestId: refresh._id,
+        status: refresh.status,
+        failureReason: refresh.failureReason ?? null,
+        requestedAt: refresh.requestedAt,
+        expiresAt: refresh.expiresAt,
       },
       serverNow: Date.now(),
     };
@@ -90,6 +91,13 @@ export const requestLocationRefresh = guardianMutation({
       )
       .unique();
     if (pending !== null && pending.expiresAt > serverNow) return { requestId: pending._id, expiresAt: pending.expiresAt, reused: true };
+    if (pending !== null) {
+      await ctx.db.patch("locationRefreshRequests", pending._id, {
+        status: "expired",
+        completedAt: serverNow,
+        purgeAt: serverNow + TERMINAL_RETENTION_MS,
+      });
+    }
     const latest = await ctx.db
       .query("locationRefreshRequests")
       .withIndex("by_child_profile_id_and_requested_at", (q) => q.eq("childProfileId", args.childProfileId))

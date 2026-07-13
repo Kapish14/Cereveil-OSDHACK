@@ -90,7 +90,7 @@ class HttpChildDeviceIdentityClient(convexSiteUrl: String) : ChildDeviceIdentity
     var done: Boolean
     do {
       val result = request("/child/commands", accessJwt, buildJsonObject {
-        if (cursor == null) put("cursor", JsonNull) else put("cursor", cursor!!)
+        cursor?.let { put("cursor", it) } ?: put("cursor", JsonNull)
       })
       when (result) {
         is ChildEnrollmentResult.Failure -> return result
@@ -147,6 +147,13 @@ class HttpChildDeviceIdentityClient(convexSiteUrl: String) : ChildDeviceIdentity
       value["grants"]!!.jsonArray.map { item -> item.jsonObject.let {
         ChildAccessGrant(it.string("grantId"), it.string("packageName"), it.long("startsAt"), it.long("expiresAt"))
       } }
+    }
+
+  override suspend fun fetchAccessRequestOutcome(accessJwt: String, requestId: String) =
+    request("/child/access-requests/outcome", accessJwt, buildJsonObject { put("requestId", requestId) }).map { value ->
+      value.string("status") to value["retryAt"]?.let { element ->
+        if (element is JsonNull) null else element.jsonPrimitive.content.toLongOrNull()
+      }
     }
 
   override suspend fun uploadLocation(

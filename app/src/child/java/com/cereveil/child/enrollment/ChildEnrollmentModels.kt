@@ -89,7 +89,9 @@ data class ChildSupervisionPolicy(
                   AppBlockSchedule(
                     scheduleId = schedule["scheduleId"]!!.jsonPrimitive.content,
                     weekdays = schedule["weekdays"]!!.jsonArray
-                      .map { it.jsonPrimitive.content.toInt() }.toSet(),
+                      .map { it.jsonPrimitive.content.toInt() }
+                      .also { require(it.distinct().size == it.size) { "Duplicate weekday" } }
+                      .toSet(),
                     startMinute = schedule["startMinute"]!!.jsonPrimitive.content.toInt(),
                     endMinute = schedule["endMinute"]!!.jsonPrimitive.content.toInt(),
                   )
@@ -103,7 +105,33 @@ data class ChildSupervisionPolicy(
         locationSharing = LocationSharingPolicy(value["locationSharing"]!!.jsonObject["enabled"]!!.jsonPrimitive.boolean),
         screenTime = ScreenTimePolicy(value["screenTime"]!!.jsonObject["enabled"]!!.jsonPrimitive.boolean),
         rawJson = raw,
-      )
+      ).also { it.validate() }
+    }
+  }
+}
+
+private fun ChildSupervisionPolicy.validate() {
+  require(appBlocking.rules.size <= 100) { "Too many app rules" }
+  val packagePattern = Regex("^[A-Za-z][A-Za-z0-9_]*(?:\\.[A-Za-z0-9_]+)+$")
+  val packages = mutableSetOf<String>()
+  val fixedExempt = setOf(
+    "com.android.systemui", "com.android.settings", "com.android.dialer",
+    "com.google.android.dialer", "com.android.emergency",
+  )
+  appBlocking.rules.forEach { rule ->
+    require(rule.packageName.matches(packagePattern) && rule.packageName.length <= 255)
+    require(!rule.packageName.startsWith("com.cereveil") && rule.packageName !in fixedExempt)
+    require(!rule.packageName.contains("launcher", true) && !rule.packageName.contains("emergency", true))
+    require(packages.add(rule.packageName)) { "Duplicate package rule" }
+    require(rule.manualBlocked || rule.schedules.isNotEmpty()) { "Empty app rule" }
+    require(rule.schedules.size <= 8) { "Too many schedules" }
+    val scheduleIds = mutableSetOf<String>()
+    rule.schedules.forEach { schedule ->
+      require(schedule.scheduleId.isNotBlank() && schedule.scheduleId.length <= 100)
+      require(scheduleIds.add(schedule.scheduleId)) { "Duplicate schedule" }
+      require(schedule.weekdays.isNotEmpty() && schedule.weekdays.all { it in 1..7 })
+      require(schedule.startMinute in 0..1439 && schedule.endMinute in 0..1439)
+      require(schedule.startMinute != schedule.endMinute)
     }
   }
 }
@@ -206,6 +234,8 @@ interface ChildDeviceIdentityClient {
     ChildEnrollmentResult.Failure(ChildEnrollmentError.NetworkUnavailable)
   suspend fun fetchAccessGrants(accessJwt: String): ChildEnrollmentResult<List<ChildAccessGrant>> =
     ChildEnrollmentResult.Failure(ChildEnrollmentError.NetworkUnavailable)
+  suspend fun fetchAccessRequestOutcome(accessJwt: String, requestId: String): ChildEnrollmentResult<Pair<String, Long?>> =
+    ChildEnrollmentResult.Failure(ChildEnrollmentError.NetworkUnavailable)
   suspend fun uploadLocation(
     accessJwt: String,
     measurement: ChildLocationMeasurement,
@@ -249,6 +279,7 @@ interface ChildEnrollmentStateStore {
   fun markPolicyAcknowledged(version: Int)
   fun savePolicy(policy: ChildSupervisionPolicy)
   fun loadPolicy(): ChildSupervisionPolicy?
+  fun clear() = Unit
 }
 
 sealed interface PolicyActivationResult {

@@ -272,12 +272,22 @@ function validateAppBlockRules(rules: AppBlockRule[]) {
   if (rules.length > 100) throwAppError("VALIDATION_FAILED");
   const packages = new Set<string>();
   const packagePattern = /^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)+$/;
+  const fixedExemptPackages = new Set([
+    "com.android.systemui",
+    "com.android.settings",
+    "com.android.dialer",
+    "com.google.android.dialer",
+    "com.android.emergency",
+  ]);
   for (const rule of rules) {
     if (
       !packagePattern.test(rule.packageName) ||
       rule.packageName.length > 255 ||
       rule.packageName === "com.cereveil" ||
       rule.packageName.startsWith("com.cereveil.") ||
+      fixedExemptPackages.has(rule.packageName) ||
+      rule.packageName.toLowerCase().includes("launcher") ||
+      rule.packageName.toLowerCase().includes("emergency") ||
       packages.has(rule.packageName) ||
       rule.schedules.length > 8 ||
       (!rule.manualBlocked && rule.schedules.length === 0)
@@ -309,10 +319,38 @@ async function applyImmediatePrivacyDisablement(
   childProfileId: Id<"childProfiles">,
   activeEnrollmentId: Id<"activeEnrollments">,
   policy: {
+    appBlocking: {
+      enabled: boolean;
+      rules: AppBlockRule[];
+    };
     locationSharing: { enabled: boolean };
     screenTime: { enabled: boolean };
   },
 ) {
+  const serverNow = now();
+  const pendingAccessRequests = await ctx.db.query("accessRequests")
+    .withIndex("by_child_profile_id_and_status", (q) =>
+      q.eq("childProfileId", childProfileId).eq("status", "pending"),
+    )
+    .take(101);
+  if (pendingAccessRequests.length > 100) throwAppError("INTERNAL_ERROR");
+  for (const request of pendingAccessRequests) {
+    const rule = policy.appBlocking.rules.find((candidate) =>
+      candidate.packageName === request.packageName,
+    );
+    const remainsEligible = policy.appBlocking.enabled && rule !== undefined && (
+      request.blockKind === "manual"
+        ? rule.manualBlocked && request.ruleFingerprint === manualBlockFingerprint(rule)
+        : rule.schedules.length > 0 && request.ruleFingerprint === scheduledBlockFingerprint(rule)
+    );
+    if (!remainsEligible) {
+      await ctx.db.patch("accessRequests", request._id, {
+        status: "expired",
+        resolvedAt: serverNow,
+        purgeAt: serverNow + 24 * 60 * 60 * 1000,
+      });
+    }
+  }
   if (!policy.locationSharing.enabled) {
     const latest = await ctx.db.query("latestLocationStates")
       .withIndex("by_active_enrollment_id", (q) => q.eq("activeEnrollmentId", activeEnrollmentId))
@@ -339,6 +377,14 @@ async function applyImmediatePrivacyDisablement(
       await ctx.db.delete("screenTimeSnapshots", snapshot._id);
     }
   }
+}
+
+function manualBlockFingerprint(rule: AppBlockRule) {
+  return JSON.stringify({ kind: "manual", manualBlocked: rule.manualBlocked });
+}
+
+function scheduledBlockFingerprint(rule: AppBlockRule) {
+  return JSON.stringify({ kind: "scheduled", schedules: rule.schedules });
 }
 
 async function loadGuardianPolicyState(ctx: QueryCtx | MutationCtx, childProfileId: Id<"childProfiles">) {

@@ -115,7 +115,9 @@ export default defineSchema({
     fingerprint: v.string(),
     resultPolicyVersion: v.number(),
     createdAt: v.number(),
-  }).index("by_child_profile_id_and_operation_id", ["childProfileId", "operationId"]),
+  })
+    .index("by_child_profile_id_and_operation_id", ["childProfileId", "operationId"])
+    .index("by_child_profile_id", ["childProfileId"]),
 
   appCatalogGenerations: defineTable({
     householdId: v.id("households"),
@@ -388,6 +390,7 @@ export default defineSchema({
     packageName: v.string(),
     appliedPolicyVersion: v.number(),
     blockKind: v.union(v.literal("manual"), v.literal("scheduled")),
+    ruleFingerprint: v.optional(v.string()),
     scheduledCoverageEnd: v.optional(v.number()),
     status: v.union(v.literal("pending"), v.literal("approved"), v.literal("denied"), v.literal("expired")),
     createdAt: v.number(),
@@ -396,6 +399,7 @@ export default defineSchema({
     purgeAt: v.number(),
   })
     .index("by_active_enrollment_id_and_package_name_and_status", ["activeEnrollmentId", "packageName", "status"])
+    .index("by_active_enrollment_id", ["activeEnrollmentId"])
     .index("by_child_profile_id_and_status", ["childProfileId", "status"])
     .index("by_expires_at", ["expiresAt"])
     .index("by_purge_at", ["purgeAt"]),
@@ -413,6 +417,7 @@ export default defineSchema({
     purgeAt: v.number(),
   })
     .index("by_active_enrollment_id_and_expires_at", ["activeEnrollmentId", "expiresAt"])
+    .index("by_active_enrollment_id", ["activeEnrollmentId"])
     .index("by_access_request_id", ["accessRequestId"])
     .index("by_purge_at", ["purgeAt"]),
 

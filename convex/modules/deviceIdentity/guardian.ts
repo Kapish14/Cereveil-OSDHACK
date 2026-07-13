@@ -8,6 +8,8 @@ import { randomBase64Url, sha256Base64Url } from "../../lib/encoding";
 import { throwAppError } from "../../lib/errors";
 import { guardianMutation, guardianQuery } from "../../lib/functionWrappers";
 import { now } from "../../lib/time";
+import { MutationCtx } from "../../_generated/server";
+import { internal } from "../../_generated/api";
 
 const CODE_LIFETIME_MS = 5 * 60 * 1000;
 
@@ -123,3 +125,70 @@ export const getEnrollmentSummary = guardianQuery({
     };
   },
 });
+
+export const replaceChildDevice = guardianMutation({
+  operation: "supervision.replaceChildDevice",
+  args: { childProfileId: v.id("childProfiles") },
+  handler: async (ctx, actor, args) => {
+    await requireGuardianForChildProfile(ctx, actor, args.childProfileId);
+    const enrollment = await ctx.db.query("activeEnrollments")
+      .withIndex("by_child_profile_id_and_status", (q) =>
+        q.eq("childProfileId", args.childProfileId).eq("status", "active"),
+      ).unique();
+    if (enrollment === null) return { replaced: false };
+    await revokeEnrollmentAuthority(ctx, enrollment._id, enrollment.childDeviceId, now());
+    await ctx.scheduler.runAfter(0, internal.modules.deviceIdentity.lifecycle.purgeRevokedEnrollment, {
+      activeEnrollmentId: enrollment._id,
+    });
+    return { replaced: true };
+  },
+});
+
+export const endSupervision = guardianMutation({
+  operation: "supervision.end",
+  args: { childProfileId: v.id("childProfiles") },
+  handler: async (ctx, actor, args) => {
+    const profile = await requireGuardianForChildProfile(ctx, actor, args.childProfileId);
+    const serverNow = now();
+    await ctx.db.patch("childProfiles", profile._id, { status: "deleting", updatedAt: serverNow });
+    const enrollment = await ctx.db.query("activeEnrollments")
+      .withIndex("by_child_profile_id_and_status", (q) =>
+        q.eq("childProfileId", profile._id).eq("status", "active"),
+      ).unique();
+    if (enrollment !== null) {
+      await revokeEnrollmentAuthority(ctx, enrollment._id, enrollment.childDeviceId, serverNow);
+    }
+    await ctx.scheduler.runAfter(0, internal.modules.deviceIdentity.lifecycle.finalizeEndSupervision, {
+      childProfileId: profile._id,
+    });
+    return { ended: true };
+  },
+});
+
+async function revokeEnrollmentAuthority(
+  ctx: MutationCtx,
+  activeEnrollmentId: Id<"activeEnrollments">,
+  childDeviceId: Id<"childDevices">,
+  serverNow: number,
+) {
+  const credentials = await ctx.db.query("childDeviceCredentials")
+    .withIndex("by_active_enrollment_id_and_status", (q) => q.eq("activeEnrollmentId", activeEnrollmentId)).take(10);
+  for (const credential of credentials) {
+    await ctx.db.patch("childDeviceCredentials", credential._id, { status: "revoked", revokedAt: serverNow, updatedAt: serverNow });
+  }
+  const tokens = await ctx.db.query("fcmTokens")
+    .withIndex("by_child_device_id", (q) => q.eq("childDeviceId", childDeviceId)).take(20);
+  for (const token of tokens) {
+    await ctx.db.patch("fcmTokens", token._id, { status: "revoked", invalidatedAt: serverNow });
+  }
+  const policyState = await ctx.db.query("policyApplicationStates")
+    .withIndex("by_active_enrollment_id", (q) => q.eq("activeEnrollmentId", activeEnrollmentId)).unique();
+  if (policyState !== null) await ctx.db.delete("policyApplicationStates", policyState._id);
+  const health = await ctx.db.query("supervisionHealth")
+    .withIndex("by_active_enrollment_id", (q) => q.eq("activeEnrollmentId", activeEnrollmentId)).unique();
+  if (health !== null) await ctx.db.delete("supervisionHealth", health._id);
+  await ctx.db.patch("activeEnrollments", activeEnrollmentId, {
+    status: "revoked", roleLockActive: false, revokedAt: serverNow, updatedAt: serverNow,
+  });
+  await ctx.db.patch("childDevices", childDeviceId, { status: "revoked", revokedAt: serverNow, updatedAt: serverNow });
+}

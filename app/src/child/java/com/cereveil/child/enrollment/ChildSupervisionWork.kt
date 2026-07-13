@@ -11,6 +11,7 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import com.cereveil.BuildConfig
+import com.cereveil.child.protection.ChildAccessGrantStore
 import java.util.concurrent.TimeUnit
 
 interface ChildFeatureCommandProcessor {
@@ -44,6 +45,7 @@ class ChildSupervisionWorker(context: Context, parameters: WorkerParameters) :
   CoroutineWorker(context, parameters) {
   override suspend fun doWork(): Result {
     val store = SharedPreferencesChildEnrollmentStateStore(applicationContext)
+    val activeEnrollmentId = store.load()?.activeEnrollmentId
     val client = HttpChildDeviceIdentityClient(BuildConfig.CONVEX_SITE_URL)
     val outcome = ChildSupervisionSyncCoordinator(
       client = client,
@@ -56,7 +58,11 @@ class ChildSupervisionWorker(context: Context, parameters: WorkerParameters) :
     return when (outcome) {
       ChildSupervisionSyncOutcome.Complete -> Result.success()
       ChildSupervisionSyncOutcome.Stop -> {
-        WorkManager.getInstance(applicationContext).cancelUniqueWork("child-supervision-${store.load()?.activeEnrollmentId}")
+        activeEnrollmentId?.let {
+          WorkManager.getInstance(applicationContext).cancelUniqueWork("child-supervision-$it")
+        }
+        ChildAccessGrantStore(applicationContext).clear()
+        ChildLocationMovementRegistration.configure(applicationContext, false)
         Result.success()
       }
       ChildSupervisionSyncOutcome.Retry -> Result.retry()
@@ -92,7 +98,7 @@ class ChildSupervisionSyncCoordinator(
             when (processed) {
               is ChildEnrollmentResult.Success -> Unit
               is ChildEnrollmentResult.Failure -> {
-                if (processed.error == ChildEnrollmentError.Unauthorized) return ChildSupervisionSyncOutcome.Stop
+                if (processed.error == ChildEnrollmentError.Unauthorized) return stopAndClear()
                 retry = true
               }
             }
@@ -121,7 +127,7 @@ class ChildSupervisionSyncCoordinator(
                     when (val rejected = client.rejectCommand(token, command.commandId, activation.reason.wireValue)) {
                     is ChildEnrollmentResult.Success -> Unit
                     is ChildEnrollmentResult.Failure -> if (rejected.error == ChildEnrollmentError.Unauthorized) {
-                      return ChildSupervisionSyncOutcome.Stop
+                      return stopAndClear()
                     }
                     }
                     continue
@@ -130,7 +136,7 @@ class ChildSupervisionSyncCoordinator(
                 applied = fetched.value
               }
               is ChildEnrollmentResult.Failure -> {
-                if (fetched.error == ChildEnrollmentError.Unauthorized) return ChildSupervisionSyncOutcome.Stop
+                if (fetched.error == ChildEnrollmentError.Unauthorized) return stopAndClear()
                 if (fetched.error == ChildEnrollmentError.InvalidPolicy) {
                   client.rejectCommand(token, command.commandId, "invalid_command")
                   continue
@@ -147,7 +153,7 @@ class ChildSupervisionSyncCoordinator(
                 acknowledgedPolicyVersion = applied.version
               }
               is ChildEnrollmentResult.Failure -> {
-                if (acknowledged.error == ChildEnrollmentError.Unauthorized) return ChildSupervisionSyncOutcome.Stop
+                if (acknowledged.error == ChildEnrollmentError.Unauthorized) return stopAndClear()
                 retry = true
               }
             }
@@ -155,33 +161,38 @@ class ChildSupervisionSyncCoordinator(
         }
       }
       is ChildEnrollmentResult.Failure -> {
-        if (commands.error == ChildEnrollmentError.Unauthorized) return ChildSupervisionSyncOutcome.Stop
+        if (commands.error == ChildEnrollmentError.Unauthorized) return stopAndClear()
         retry = true
       }
     }
     val policy = store.loadPolicy()
     featureProcessor?.maintain(token, policy)?.let { result ->
       if (result is ChildEnrollmentResult.Failure) {
-        if (result.error == ChildEnrollmentError.Unauthorized) return ChildSupervisionSyncOutcome.Stop
+        if (result.error == ChildEnrollmentError.Unauthorized) return stopAndClear()
         retry = true
       }
     }
     if (policy != null && acknowledgedPolicyVersion != policy.version) {
       when (val result = client.acknowledgePolicy(token, policy.version)) {
         is ChildEnrollmentResult.Success -> store.markPolicyAcknowledged(policy.version)
-        is ChildEnrollmentResult.Failure -> if (result.error == ChildEnrollmentError.Unauthorized) return ChildSupervisionSyncOutcome.Stop else retry = true
+        is ChildEnrollmentResult.Failure -> if (result.error == ChildEnrollmentError.Unauthorized) return stopAndClear() else retry = true
       }
     }
     when (val result = client.heartbeat(token, capabilities())) {
       is ChildEnrollmentResult.Success -> Unit
-      is ChildEnrollmentResult.Failure -> if (result.error == ChildEnrollmentError.Unauthorized) return ChildSupervisionSyncOutcome.Stop else retry = true
+      is ChildEnrollmentResult.Failure -> if (result.error == ChildEnrollmentError.Unauthorized) return stopAndClear() else retry = true
     }
     return if (retry) ChildSupervisionSyncOutcome.Retry else ChildSupervisionSyncOutcome.Complete
   }
 
   private fun outcomeFor(error: ChildEnrollmentError) = if (error == ChildEnrollmentError.Unauthorized) {
-    ChildSupervisionSyncOutcome.Stop
+    stopAndClear()
   } else {
     ChildSupervisionSyncOutcome.Retry
+  }
+
+  private fun stopAndClear(): ChildSupervisionSyncOutcome {
+    store.clear()
+    return ChildSupervisionSyncOutcome.Stop
   }
 }

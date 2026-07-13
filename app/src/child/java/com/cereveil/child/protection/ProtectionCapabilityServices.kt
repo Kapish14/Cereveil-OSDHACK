@@ -9,6 +9,8 @@ import android.view.View
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityWindowInfo
+import android.os.Handler
+import android.os.Looper
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -31,34 +33,54 @@ class CereveilAccessibilityService : AccessibilityService() {
   private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
   private var overlay: View? = null
   private var overlayPackage: String? = null
+  private var askButton: Button? = null
+  private val handler = Handler(Looper.getMainLooper())
+  private val boundaryCheck = object : Runnable {
+    override fun run() {
+      evaluateVisibleApps(null)
+    }
+  }
+
+  override fun onServiceConnected() {
+    instance = this
+  }
 
   override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+    evaluateVisibleApps(event?.packageName?.toString())
+  }
+
+  private fun evaluateVisibleApps(eventPackage: String?) {
     val policy = getSharedPreferences("child_policy_runtime", MODE_PRIVATE)
       .getString("policy", null)
       ?.let { runCatching { ChildSupervisionPolicy.parse(it) }.getOrNull() }
       ?: return hideOverlay()
     val now = Instant.now()
     val grants = ChildAccessGrantStore(this).active(now)
-    val blocked = windows.asSequence()
+    val visiblePackages = windows.asSequence()
       .filter { it.type == AccessibilityWindowInfo.TYPE_APPLICATION }
       .mapNotNull { it.root?.packageName?.toString() }
       .distinct()
       .filterNot(::isExemptPackage)
+      .toMutableList()
+    eventPackage?.takeUnless(::isExemptPackage)?.let { if (it !in visiblePackages) visiblePackages += it }
+    val blocked = visiblePackages.asSequence()
       .mapNotNull { packageName ->
         AppBlockEvaluator.evaluate(packageName, policy.appBlocking, now, ZoneId.systemDefault(), grants)
           ?.let { packageName to it }
       }
       .firstOrNull()
-      ?: event?.packageName?.toString()?.takeUnless(::isExemptPackage)?.let { packageName ->
-        AppBlockEvaluator.evaluate(packageName, policy.appBlocking, now, ZoneId.systemDefault(), grants)
-          ?.let { packageName to it }
-      }
     if (blocked === null) hideOverlay() else showOverlay(blocked.first, blocked.second, policy.version)
+    handler.removeCallbacks(boundaryCheck)
+    AppBlockEvaluator.nextTransition(visiblePackages, policy.appBlocking, now, ZoneId.systemDefault(), grants)?.let {
+      handler.postDelayed(boundaryCheck, (it.toEpochMilli() - System.currentTimeMillis() + 50).coerceAtLeast(50))
+    }
   }
 
   override fun onInterrupt() = hideOverlay()
 
   override fun onDestroy() {
+    handler.removeCallbacks(boundaryCheck)
+    if (instance === this) instance = null
     hideOverlay()
     scope.cancel()
     super.onDestroy()
@@ -96,6 +118,7 @@ class CereveilAccessibilityService : AccessibilityService() {
         text = "Sending request…"
         requestAccess(packageName, block, policyVersion, this)
       }
+      askButton = this
     })
     content.addView(Button(this).apply {
       text = "Go Home"
@@ -144,9 +167,37 @@ class CereveilAccessibilityService : AccessibilityService() {
     overlay?.let { runCatching { getSystemService(WindowManager::class.java).removeView(it) } }
     overlay = null
     overlayPackage = null
+    askButton = null
   }
 
   private fun isExemptPackage(packageName: String) = ChildExemptApps.isExempt(this, packageName)
+
+  companion object {
+    @Volatile private var instance: CereveilAccessibilityService? = null
+
+    fun requestReevaluation(resetRequestPresentation: Boolean = false) {
+      instance?.let { service ->
+        service.handler.post {
+          if (resetRequestPresentation) service.hideOverlay()
+          service.evaluateVisibleApps(null)
+        }
+      }
+    }
+
+    fun showDenied(retryAt: Long) {
+      instance?.let { service ->
+        service.handler.post {
+          val button = service.askButton ?: return@post
+          button.isEnabled = false
+          button.text = "Guardian said no • try again soon"
+          service.handler.postDelayed({
+            service.hideOverlay()
+            service.evaluateVisibleApps(null)
+          }, (retryAt - System.currentTimeMillis()).coerceAtLeast(1_000))
+        }
+      }
+    }
+  }
 }
 
 class CereveilNotificationListenerService : NotificationListenerService()

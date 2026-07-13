@@ -52,4 +52,19 @@ class AppBlockEvaluatorTest {
     assertTrue(block is EffectiveAppBlock.Scheduled)
     assertEquals(Instant.parse("2026-07-14T02:30:00Z"), (block as EffectiveAppBlock.Scheduled).coverageEndsAt)
   }
+
+  @Test
+  fun daylightSavingScheduleUsesLocalCivilTimeInsteadOfElapsedMinutesFromMidnight() {
+    val newYork = ZoneId.of("America/New_York")
+    val policy = AppBlockingPolicy(true, listOf(AppBlockRule(
+      "com.example.reader",
+      false,
+      listOf(AppBlockSchedule("sunday-morning", setOf(7), 7 * 60, 8 * 60)),
+    )))
+    val now = Instant.parse("2026-03-08T11:30:00Z") // 07:30 after the spring-forward gap.
+
+    assertTrue(AppBlockEvaluator.evaluate(
+      "com.example.reader", policy, now, newYork, emptyList(),
+    ) is EffectiveAppBlock.Scheduled)
+  }
 }

@@ -216,6 +216,23 @@ http.route({
 });
 
 http.route({
+  path: "/child/access-requests/outcome",
+  method: "POST",
+  handler: childDeviceHttpAction({
+    operation: "child.access.requestOutcome",
+    logSuccess: false,
+    handler: async (ctx, actor, request) => {
+      const requestId = stringField(await parseJson(request), "requestId");
+      if (requestId === null) throwAppError("VALIDATION_FAILED");
+      return await ctx.runQuery(internal.modules.access.internal.getAccessRequestOutcome, {
+        actor,
+        input: { requestId: requestId as Id<"accessRequests">, serverNow: Date.now() },
+      });
+    },
+  }),
+});
+
+http.route({
   path: "/child/location",
   method: "POST",
   handler: childDeviceHttpAction({

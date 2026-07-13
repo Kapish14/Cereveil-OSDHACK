@@ -24,6 +24,19 @@ export const startSnapshot = internalMutation({
   },
   handler: async (ctx, args) => {
     const actor = await requireActiveChildDeviceActor(ctx, args.actor);
+    const state = await ctx.db.query("policyApplicationStates")
+      .withIndex("by_active_enrollment_id", (q) => q.eq("activeEnrollmentId", actor.enrollment._id)).unique();
+    const applied = state?.appliedPolicyVersion === undefined ? null : await ctx.db.query("supervisionPolicies")
+      .withIndex("by_child_profile_id_and_version", (q) =>
+        q.eq("childProfileId", actor.childProfile._id).eq("version", state.appliedPolicyVersion!),
+      ).unique();
+    const desired = (await ctx.db.query("supervisionPolicies")
+      .withIndex("by_child_profile_id_and_version", (q) => q.eq("childProfileId", actor.childProfile._id))
+      .order("desc").take(1)).at(0);
+    if (
+      applied?.screenTime?.enabled !== true || desired?.status !== "active" ||
+      desired.screenTime?.enabled !== true
+    ) throwAppError("VALIDATION_FAILED");
     const request = await ctx.db.get("screenTimeRefreshRequests", args.input.refreshRequestId);
     if (
       request === null || request.activeEnrollmentId !== actor.enrollment._id ||
@@ -161,5 +174,19 @@ export const completeSnapshot = internalMutation({
       purgeAt: args.input.serverNow + STAGING_RETENTION_MS,
     });
     return { measuredAt: snapshot.measuredAt, validUntil: snapshot.validUntil };
+  },
+});
+
+export const expireRefresh = internalMutation({
+  args: { requestId: v.id("screenTimeRefreshRequests"), serverNow: v.number() },
+  handler: async (ctx, args) => {
+    const request = await ctx.db.get("screenTimeRefreshRequests", args.requestId);
+    if (request?.status !== "pending" || request.expiresAt > args.serverNow) return false;
+    await ctx.db.patch("screenTimeRefreshRequests", request._id, {
+      status: "expired",
+      completedAt: args.serverNow,
+      purgeAt: args.serverNow + STAGING_RETENTION_MS,
+    });
+    return true;
   },
 });

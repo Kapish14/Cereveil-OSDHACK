@@ -23,11 +23,13 @@ class AndroidPolicyControlledRuntime(context: Context) : PolicyControlledRuntime
         .putBoolean("screen_time_enabled", policy.screenTime.enabled)
         .commit()
     if (!saved) return PolicyActivationResult.RetryableFailure
-    configureMovementUpdates(policy.locationSharing.enabled)
+    ChildLocationMovementRegistration.configure(context, policy.locationSharing.enabled)
     return PolicyActivationResult.Success
   }
+}
 
-  private fun configureMovementUpdates(enabled: Boolean) {
+object ChildLocationMovementRegistration {
+  fun configure(context: Context, enabled: Boolean) {
     val intent = Intent(context, ChildLocationMovementReceiver::class.java)
     val pending = PendingIntent.getBroadcast(
       context, 77, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,

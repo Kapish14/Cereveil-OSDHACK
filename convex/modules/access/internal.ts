@@ -47,6 +47,17 @@ export const createAccessRequest = internalMutation({
       (args.input.blockKind === "manual" && !rule.manualBlocked) ||
       (args.input.blockKind === "scheduled" && rule.schedules.length === 0)
     ) throwAppError("VALIDATION_FAILED");
+    const desiredPolicy = (await ctx.db.query("supervisionPolicies")
+      .withIndex("by_child_profile_id_and_version", (q) => q.eq("childProfileId", actor.childProfile._id))
+      .order("desc").take(1)).at(0);
+    const desiredRule = desiredPolicy?.appBlocking.rules?.find((candidate) =>
+      candidate.packageName === args.input.packageName,
+    );
+    const fingerprint = effectiveBlockFingerprint(args.input.blockKind, rule);
+    if (
+      desiredPolicy?.status !== "active" || !desiredPolicy.appBlocking.enabled ||
+      desiredRule === undefined || effectiveBlockFingerprint(args.input.blockKind, desiredRule) !== fingerprint
+    ) throwAppError("VALIDATION_FAILED");
 
     const pending = await ctx.db
       .query("accessRequests")
@@ -59,6 +70,13 @@ export const createAccessRequest = internalMutation({
       .unique();
     if (pending !== null && pending.expiresAt > args.input.serverNow) {
       return { requestId: pending._id, expiresAt: pending.expiresAt, reused: true };
+    }
+    if (pending !== null) {
+      await ctx.db.patch("accessRequests", pending._id, {
+        status: "expired",
+        resolvedAt: args.input.serverNow,
+        purgeAt: args.input.serverNow + TERMINAL_RETENTION_MS,
+      });
     }
     const denied = await ctx.db
       .query("accessRequests")
@@ -77,7 +95,10 @@ export const createAccessRequest = internalMutation({
     const scheduleEnd = args.input.blockKind === "scheduled"
       ? args.input.scheduledCoverageEnd
       : undefined;
-    if (args.input.blockKind === "scheduled" && (scheduleEnd === undefined || scheduleEnd <= args.input.serverNow)) {
+    if (
+      args.input.blockKind === "scheduled" &&
+      (scheduleEnd === undefined || scheduleEnd <= args.input.serverNow || scheduleEnd > args.input.serverNow + 8 * 24 * 60 * 60 * 1000)
+    ) {
       throwAppError("VALIDATION_FAILED");
     }
     const expiresAt = Math.min(
@@ -92,6 +113,7 @@ export const createAccessRequest = internalMutation({
       packageName: args.input.packageName,
       appliedPolicyVersion: args.input.appliedPolicyVersion,
       blockKind: args.input.blockKind,
+      ruleFingerprint: fingerprint,
       ...(scheduleEnd === undefined ? {} : { scheduledCoverageEnd: scheduleEnd }),
       status: "pending",
       createdAt: args.input.serverNow,
@@ -138,6 +160,15 @@ export const createAccessRequest = internalMutation({
   },
 });
 
+export function effectiveBlockFingerprint(
+  kind: "manual" | "scheduled",
+  rule: { manualBlocked: boolean; schedules: Array<{ scheduleId: string; weekdays: number[]; startMinute: number; endMinute: number }> },
+) {
+  return kind === "manual"
+    ? JSON.stringify({ kind, manualBlocked: rule.manualBlocked })
+    : JSON.stringify({ kind, schedules: rule.schedules });
+}
+
 export const expireAccessRequest = internalMutation({
   args: { requestId: v.id("accessRequests"), serverNow: v.number() },
   handler: async (ctx, args) => {
@@ -170,6 +201,26 @@ export const reconcileAccessGrants = internalQuery({
         startsAt: grant.startsAt,
         expiresAt: grant.expiresAt,
       })),
+    };
+  },
+});
+
+export const getAccessRequestOutcome = internalQuery({
+  args: {
+    actor: childDeviceActorValidator,
+    input: v.object({ requestId: v.id("accessRequests"), serverNow: v.number() }),
+  },
+  handler: async (ctx, args) => {
+    const actor = await requireActiveChildDeviceActor(ctx, args.actor);
+    const request = await ctx.db.get("accessRequests", args.input.requestId);
+    if (request === null || request.activeEnrollmentId !== actor.enrollment._id) {
+      throwAppError("CHILD_DEVICE_UNAUTHORIZED");
+    }
+    return {
+      status: request.status,
+      retryAt: request.status === "denied" && request.resolvedAt !== undefined
+        ? request.resolvedAt + DENIAL_COOLDOWN_MS
+        : null,
     };
   },
 });

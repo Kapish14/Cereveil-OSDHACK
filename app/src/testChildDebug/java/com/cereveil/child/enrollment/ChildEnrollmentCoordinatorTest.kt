@@ -112,6 +112,16 @@ class ChildEnrollmentCoordinatorTest {
   }
 
   @Test
+  fun schemaV2ParserRejectsDuplicateAndEmptyAppRulesBeforeActivation() {
+    val invalid = testPolicy().rawJson.replace(
+      "\"appBlocking\":{\"enabled\":false,\"rules\":[]}",
+      "\"appBlocking\":{\"enabled\":true,\"rules\":[{\"packageName\":\"com.example.reader\",\"manualBlocked\":false,\"schedules\":[]}]}",
+    )
+
+    assertTrue(runCatching { ChildSupervisionPolicy.parse(invalid) }.isFailure)
+  }
+
+  @Test
   fun heartbeatFailureDoesNotUndoLocalPolicyApplication() = runTest {
     val harness = Harness().apply { client.heartbeatFails = true }
 

@@ -118,7 +118,8 @@ export const getDeliveryTargets = internalQuery({
       .take(10);
     return {
       category: "child_command" as const,
-      priority: command.type === "refresh_location" || command.type === "reconcile_access_grants"
+      priority: command.type === "refresh_location" ||
+        (command.type === "reconcile_access_grants" && !command.intentKey.startsWith("access_outcome:"))
         ? "high" as const
         : "normal" as const,
       targets: tokens.filter((token) => token.status === "active"),

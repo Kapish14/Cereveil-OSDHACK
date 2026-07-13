@@ -25,6 +25,8 @@ const getLatestLocation = api.modules.location.guardian.getLatestLocation;
 const getOrRequestScreenTime = api.modules.screenTime.guardian.getOrRequestScreenTime;
 const listPendingAccessRequests = api.modules.access.guardian.listPendingAccessRequests;
 const resolveAccessRequest = api.modules.access.guardian.resolveAccessRequest;
+const replaceChildDevice = api.modules.deviceIdentity.guardian.replaceChildDevice;
+const endSupervision = api.modules.deviceIdentity.guardian.endSupervision;
 
 const identity = {
   tokenIdentifier: "https://clerk.example|guardian_enrollment",
@@ -954,6 +956,7 @@ describe("Latest-only feature convergence", () => {
   beforeEach(() => {
     process.env.CHILD_DEVICE_JWT_SECRET = "test-only-child-jwt-secret-with-at-least-32-bytes";
   });
+  afterEach(() => vi.useRealTimers());
 
   test("publishes newer location, atomic screen time, and absolute access grants", async () => {
     const enrolled = await enrolledChild(2);
@@ -1005,10 +1008,35 @@ describe("Latest-only feature convergence", () => {
     });
     const location = await enrolled.t.withIdentity(identity).query(getLatestLocation, guardianArgs);
     expect(location.location).toMatchObject({ latitude: 12.9, longitude: 77.6, capturedAt });
+    await enrolled.t.withIdentity(identity).mutation(updateLocationSharing, {
+      ...guardianArgs, expectedCurrentVersion: 4, operationId: "disable-location-0001", enabled: false,
+    });
+    expect((await childRequest(enrolled.t, "/child/location", enrolled.body.accessJwt, {
+      latitude: 13, longitude: 78, accuracyMeters: 10, capturedAt: capturedAt + 1,
+    })).status).toBe(400);
+    expect((await enrolled.t.withIdentity(identity).query(getLatestLocation, guardianArgs)).location).toBeNull();
 
     const requested = await enrolled.t.withIdentity(identity).mutation(getOrRequestScreenTime, guardianArgs);
     expect(requested.snapshot).toBeNull();
-    const refreshRequestId = requested.refresh!.requestId;
+    const staleRefreshRequestId = requested.refresh!.requestId;
+    await enrolled.t.run(async (ctx: MutationCtx) => {
+      await ctx.db.patch("screenTimeRefreshRequests", staleRefreshRequestId, { expiresAt: 0 });
+      const command = (await ctx.db.query("childDeviceCommands")
+        .withIndex("by_active_enrollment_id_and_intent_key", (q) =>
+          q.eq("activeEnrollmentId", enrolled.body.activeEnrollmentId).eq("intentKey", "refresh_screen_time"),
+        ).order("desc").take(1))[0];
+      await ctx.db.patch("childDeviceCommands", command._id, { expiresAt: 0 });
+    });
+    const retried = await enrolled.t.withIdentity(identity).mutation(getOrRequestScreenTime, guardianArgs);
+    const refreshRequestId = retried.refresh!.requestId;
+    expect(refreshRequestId).not.toBe(staleRefreshRequestId);
+    const pendingCommands = await enrolled.t.run(async (ctx: MutationCtx) =>
+      await ctx.db.query("childDeviceCommands")
+        .withIndex("by_active_enrollment_id_and_status", (q) =>
+          q.eq("activeEnrollmentId", enrolled.body.activeEnrollmentId).eq("status", "pending"),
+        ).collect(),
+    );
+    expect(pendingCommands.filter((command) => command.type === "refresh_screen_time")).toHaveLength(1);
     const measuredAt = Date.now();
     const started = await childRequest(enrolled.t, "/child/screen-time/snapshots/start", enrolled.body.accessJwt, {
       refreshRequestId, expectedCount: 1, measuredAt,
@@ -1039,6 +1067,85 @@ describe("Latest-only feature convergence", () => {
     expect(resolution.status).toBe("approved");
     const grants = await childRequest(enrolled.t, "/child/access-grants", enrolled.body.accessJwt);
     expect((await grants.json()).grants[0]).toMatchObject({ packageName: "com.example.reader" });
+  });
+
+  test("expires a pending access request when its applicable block rule changes", async () => {
+    const enrolled = await enrolledChild(2);
+    const guardianArgs = {
+      guardianInstallationId: bootstrapArgs.guardianInstallationId,
+      childProfileId: enrolled.child.childProfileId,
+    };
+    const updateRules = makeFunctionReference<"mutation">(
+      "modules/policies/guardian:updateAppBlockingRules",
+    ) as FunctionReference<"mutation", "public", any, any>;
+    await enrolled.t.withIdentity(identity).mutation(updateRules, {
+      ...guardianArgs,
+      expectedCurrentVersion: 1,
+      operationId: "enable-block-for-request-0001",
+      rules: [{ packageName: "com.example.reader", manualBlocked: true, schedules: [] }],
+    });
+    await childRequest(enrolled.t, "/child/policy/acknowledge", enrolled.body.accessJwt, {
+      appliedPolicyVersion: 2,
+    });
+    expect((await childRequest(enrolled.t, "/child/access-requests", enrolled.body.accessJwt, {
+      packageName: "com.example.reader", appliedPolicyVersion: 2, blockKind: "manual",
+    })).status).toBe(200);
+    expect(await enrolled.t.withIdentity(identity).query(listPendingAccessRequests, guardianArgs)).toHaveLength(1);
+
+    await enrolled.t.withIdentity(identity).mutation(updateRules, {
+      ...guardianArgs,
+      expectedCurrentVersion: 2,
+      operationId: "remove-block-for-request-0001",
+      rules: [],
+    });
+
+    expect(await enrolled.t.withIdentity(identity).query(listPendingAccessRequests, guardianArgs)).toHaveLength(0);
+    const requests = await enrolled.t.run(async (ctx: MutationCtx) =>
+      await ctx.db.query("accessRequests").collect(),
+    );
+    expect(requests).toHaveLength(1);
+    expect(requests[0].status).toBe("expired");
+  });
+
+  test("replacement clears enrollment-owned feature state and end supervision deletes retained policy", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-13T10:00:00Z"));
+    const enrolled = await enrolledChild(2);
+    const guardianArgs = {
+      guardianInstallationId: bootstrapArgs.guardianInstallationId,
+      childProfileId: enrolled.child.childProfileId,
+    };
+    const started = await childRequest(enrolled.t, "/child/app-catalog/generations/start", enrolled.body.accessJwt, {
+      expectedCount: 1,
+    });
+    const generationId = (await started.json()).generationId;
+    await childRequest(enrolled.t, "/child/app-catalog/generations/batch", enrolled.body.accessJwt, {
+      generationId, apps: [{ packageName: "com.example.reader", label: "Reader" }],
+    });
+    await childRequest(enrolled.t, "/child/app-catalog/generations/complete", enrolled.body.accessJwt, { generationId });
+
+    expect(await enrolled.t.withIdentity(identity).mutation(replaceChildDevice, guardianArgs)).toEqual({ replaced: true });
+    await enrolled.t.finishAllScheduledFunctions(() => vi.runAllTimers());
+    const afterReplace = await enrolled.t.run(async (ctx: MutationCtx) => ({
+      generations: await ctx.db.query("appCatalogGenerations").collect(),
+      entries: await ctx.db.query("appCatalogEntries").collect(),
+      enrollment: await ctx.db.get("activeEnrollments", enrolled.body.activeEnrollmentId),
+      policies: await ctx.db.query("supervisionPolicies").collect(),
+    }));
+    expect(afterReplace.generations).toHaveLength(0);
+    expect(afterReplace.entries).toHaveLength(0);
+    expect(afterReplace.enrollment?.status).toBe("revoked");
+    expect(afterReplace.policies).toHaveLength(1);
+
+    expect(await enrolled.t.withIdentity(identity).mutation(endSupervision, guardianArgs)).toEqual({ ended: true });
+    await enrolled.t.finishAllScheduledFunctions(() => vi.runAllTimers());
+    const afterEnd = await enrolled.t.run(async (ctx: MutationCtx) => ({
+      profiles: await ctx.db.query("childProfiles").collect(),
+      policies: await ctx.db.query("supervisionPolicies").collect(),
+      devices: await ctx.db.query("childDevices").collect(),
+      enrollments: await ctx.db.query("activeEnrollments").collect(),
+    }));
+    expect(afterEnd).toEqual({ profiles: [], policies: [], devices: [], enrollments: [] });
   });
 });
 

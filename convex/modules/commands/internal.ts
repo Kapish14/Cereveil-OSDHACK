@@ -20,7 +20,7 @@ export const reconcileCommands = internalQuery({
       )
       .paginate(args.input.paginationOpts);
     return {
-      commands: result.page.map((command) => command.type === "apply_policy_version"
+      commands: result.page.filter((command) => command.expiresAt > Date.now() && validCommandPayload(command)).map((command) => command.type === "apply_policy_version"
         ? {
             commandId: command._id,
             type: command.type,
@@ -112,7 +112,18 @@ export async function createFeatureCommand(
     .order("desc")
     .take(1);
   const current = existing.at(0);
-  if (current?.status === "pending") return current._id;
+  if (
+    current?.status === "pending" &&
+    current.expiresAt > args.serverNow &&
+    current.type === args.type &&
+    current.referenceId === args.referenceId
+  ) return current._id;
+  if (current?.status === "pending") {
+    await ctx.db.patch("childDeviceCommands", current._id, {
+      status: current.expiresAt <= args.serverNow ? "expired" : "superseded",
+      updatedAt: args.serverNow,
+    });
+  }
   const commandId = await ctx.db.insert("childDeviceCommands", {
     householdId: args.householdId,
     childProfileId: args.childProfileId,
@@ -149,6 +160,10 @@ export const acknowledgeFeatureCommand = internalMutation({
       throwAppError("CHILD_DEVICE_UNAUTHORIZED");
     }
     if (command.status === "pending") {
+      if (command.type === "apply_policy_version" || !validCommandPayload(command)) {
+        throwAppError("VALIDATION_FAILED");
+      }
+      if (!await featureResultIsDurable(ctx, command)) throwAppError("VALIDATION_FAILED");
       await ctx.db.patch("childDeviceCommands", command._id, {
         status: "acknowledged",
         acknowledgedAt: args.input.serverNow,
@@ -158,3 +173,36 @@ export const acknowledgeFeatureCommand = internalMutation({
     return { ok: true };
   },
 });
+
+function validCommandPayload(command: {
+  type: "apply_policy_version" | "refresh_location" | "refresh_screen_time" | "reconcile_access_grants";
+  policyVersion?: number;
+  referenceId?: string;
+}) {
+  return command.type === "apply_policy_version"
+    ? Number.isInteger(command.policyVersion) && command.referenceId === undefined
+    : command.policyVersion === undefined && typeof command.referenceId === "string" && command.referenceId.length > 0;
+}
+
+async function featureResultIsDurable(
+  ctx: MutationCtx,
+  command: { type: string; referenceId?: string },
+) {
+  const referenceId = command.referenceId!;
+  if (command.type === "refresh_location") {
+    const id = ctx.db.normalizeId("locationRefreshRequests", referenceId);
+    const request = id === null ? null : await ctx.db.get("locationRefreshRequests", id);
+    return request !== null && request.status !== "pending";
+  }
+  if (command.type === "refresh_screen_time") {
+    const id = ctx.db.normalizeId("screenTimeRefreshRequests", referenceId);
+    const request = id === null ? null : await ctx.db.get("screenTimeRefreshRequests", id);
+    return request?.status === "completed";
+  }
+  if (command.type === "reconcile_access_grants") {
+    const requestId = ctx.db.normalizeId("accessRequests", referenceId);
+    const request = requestId === null ? null : await ctx.db.get("accessRequests", requestId);
+    return request !== null && request.status !== "pending";
+  }
+  return false;
+}

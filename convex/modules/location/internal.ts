@@ -27,6 +27,7 @@ export const recordMeasurement = internalMutation({
       args.input.longitude < -180 || args.input.longitude > 180 ||
       !Number.isFinite(args.input.accuracyMeters) || args.input.accuracyMeters < 0 ||
       args.input.accuracyMeters > 100_000 ||
+      args.input.capturedAt < args.input.serverNow - 24 * 60 * 60 * 1000 ||
       args.input.capturedAt > args.input.serverNow + 5 * 60 * 1000
     ) throwAppError("VALIDATION_FAILED");
     const state = await ctx.db
@@ -40,7 +41,16 @@ export const recordMeasurement = internalMutation({
         q.eq("childProfileId", actor.childProfile._id).eq("version", state.appliedPolicyVersion!),
       )
       .unique();
-    if (applied?.locationSharing?.enabled !== true) throwAppError("VALIDATION_FAILED");
+    const desired = (await ctx.db
+      .query("supervisionPolicies")
+      .withIndex("by_child_profile_id_and_version", (q) => q.eq("childProfileId", actor.childProfile._id))
+      .order("desc")
+      .take(1)).at(0);
+    if (
+      applied?.locationSharing?.enabled !== true ||
+      desired?.status !== "active" ||
+      desired.locationSharing?.enabled !== true
+    ) throwAppError("VALIDATION_FAILED");
 
     let refresh = null;
     if (args.input.refreshRequestId !== undefined) {

@@ -4,6 +4,7 @@ import { guardianMutation, guardianQuery } from "../../lib/functionWrappers";
 import { requireGuardianForChildProfile } from "../../lib/authorize";
 import { throwAppError } from "../../lib/errors";
 import { createFeatureCommand } from "../commands/internal";
+import { effectiveBlockFingerprint } from "./internal";
 
 const TERMINAL_RETENTION_MS = 24 * 60 * 60 * 1000;
 const GRANT_DURATIONS = new Set([15, 30, 45, 60]);
@@ -58,7 +59,14 @@ export const resolveAccessRequest = guardianMutation({
       .take(1);
     const current = activePolicy.at(0);
     const rule = current?.appBlocking.rules?.find((candidate) => candidate.packageName === request.packageName);
-    if (current?.status !== "active" || !current.appBlocking.enabled || rule === undefined) {
+    const fingerprint = rule === undefined ? null : effectiveBlockFingerprint(request.blockKind, rule);
+    if (
+      current?.status !== "active" || !current.appBlocking.enabled || rule === undefined ||
+      (request.blockKind === "manual" && !rule.manualBlocked) ||
+      (request.blockKind === "scheduled" && rule.schedules.length === 0) ||
+      (request.ruleFingerprint !== undefined && fingerprint !== request.ruleFingerprint) ||
+      (request.blockKind === "scheduled" && (request.scheduledCoverageEnd ?? 0) <= serverNow)
+    ) {
       await ctx.db.patch("accessRequests", request._id, {
         status: "expired",
         resolvedAt: serverNow,
@@ -71,6 +79,17 @@ export const resolveAccessRequest = guardianMutation({
         status: "denied",
         resolvedAt: serverNow,
         purgeAt: serverNow + TERMINAL_RETENTION_MS,
+      });
+      await createFeatureCommand(ctx, {
+        householdId: request.householdId,
+        childProfileId: request.childProfileId,
+        activeEnrollmentId: request.activeEnrollmentId,
+        childDeviceId: request.childDeviceId,
+        type: "reconcile_access_grants",
+        referenceId: request._id,
+        intentKey: `access_outcome:${request._id}`,
+        serverNow,
+        lifetimeMs: 15 * 60 * 1000,
       });
       return { status: "denied" as const, grant: null };
     }
@@ -107,7 +126,7 @@ export const resolveAccessRequest = guardianMutation({
       activeEnrollmentId: request.activeEnrollmentId,
       childDeviceId: request.childDeviceId,
       type: "reconcile_access_grants",
-      referenceId: grantId,
+      referenceId: request._id,
       intentKey: "reconcile_access_grants",
       serverNow,
       lifetimeMs: 7 * 24 * 60 * 60 * 1000,

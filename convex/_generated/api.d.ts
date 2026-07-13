@@ -35,6 +35,8 @@ import type * as modules_commands_internal from "../modules/commands/internal.js
 import type * as modules_deviceIdentity_guardian from "../modules/deviceIdentity/guardian.js";
 import type * as modules_deviceIdentity_internal from "../modules/deviceIdentity/internal.js";
 import type * as modules_deviceIdentity_jwt from "../modules/deviceIdentity/jwt.js";
+import type * as modules_deviceIdentity_lifecycle from "../modules/deviceIdentity/lifecycle.js";
+import type * as modules_featureLifecycle_internal from "../modules/featureLifecycle/internal.js";
 import type * as modules_guardianAuth_data from "../modules/guardianAuth/data.js";
 import type * as modules_guardianAuth_public from "../modules/guardianAuth/public.js";
 import type * as modules_guardianAuth_useCases from "../modules/guardianAuth/useCases.js";
@@ -82,6 +84,8 @@ declare const fullApi: ApiFromModules<{
   "modules/deviceIdentity/guardian": typeof modules_deviceIdentity_guardian;
   "modules/deviceIdentity/internal": typeof modules_deviceIdentity_internal;
   "modules/deviceIdentity/jwt": typeof modules_deviceIdentity_jwt;
+  "modules/deviceIdentity/lifecycle": typeof modules_deviceIdentity_lifecycle;
+  "modules/featureLifecycle/internal": typeof modules_featureLifecycle_internal;
   "modules/guardianAuth/data": typeof modules_guardianAuth_data;
   "modules/guardianAuth/public": typeof modules_guardianAuth_public;
   "modules/guardianAuth/useCases": typeof modules_guardianAuth_useCases;

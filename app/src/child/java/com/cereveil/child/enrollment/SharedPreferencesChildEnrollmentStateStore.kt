@@ -67,6 +67,11 @@ class SharedPreferencesChildEnrollmentStateStore(context: Context) : ChildEnroll
       ChildSupervisionPolicy.parse(raw)
     }.getOrNull()
   }
+
+  override fun clear() {
+    preferences.edit().clear().commit()
+    policyPreferences.edit().clear().commit()
+  }
 }
 
 private fun kotlinx.serialization.json.JsonObject.string(key: String) =

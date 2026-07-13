@@ -17,6 +17,7 @@ import com.cereveil.R
 import com.cereveil.child.protection.ChildAccessGrantStore
 import com.cereveil.child.protection.LocalAccessGrant
 import com.cereveil.child.protection.ChildExemptApps
+import com.cereveil.child.protection.CereveilAccessibilityService
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -33,7 +34,7 @@ class AndroidChildFeatureCommandProcessor(
 
   override suspend fun process(accessJwt: String, command: ChildDeviceCommand): ChildEnrollmentResult<Unit> {
     val performed = when (command.type) {
-      "reconcile_access_grants" -> reconcileGrants(accessJwt)
+      "reconcile_access_grants" -> reconcileAccess(accessJwt, command.referenceId)
       "refresh_location" -> refreshLocation(accessJwt, command.referenceId)
       "refresh_screen_time" -> refreshScreenTime(accessJwt, command.referenceId)
       else -> client.rejectCommand(accessJwt, command.commandId, "unsupported_command")
@@ -46,6 +47,7 @@ class AndroidChildFeatureCommandProcessor(
     accessJwt: String,
     policy: ChildSupervisionPolicy?,
   ): ChildEnrollmentResult<Unit> {
+    ChildLocationMovementRegistration.configure(context, policy?.locationSharing?.enabled == true)
     val catalog = launcherApps()
     val synced = client.syncAppCatalog(accessJwt, catalog)
     if (synced is ChildEnrollmentResult.Failure) return synced
@@ -55,16 +57,27 @@ class AndroidChildFeatureCommandProcessor(
     return ChildEnrollmentResult.Success(Unit)
   }
 
-  private suspend fun reconcileGrants(accessJwt: String): ChildEnrollmentResult<Unit> =
-    when (val result = client.fetchAccessGrants(accessJwt)) {
+  private suspend fun reconcileAccess(accessJwt: String, requestId: String?): ChildEnrollmentResult<Unit> {
+    if (requestId != null) {
+      when (val outcome = client.fetchAccessRequestOutcome(accessJwt, requestId)) {
+        is ChildEnrollmentResult.Failure -> return outcome
+        is ChildEnrollmentResult.Success -> if (outcome.value.first == "denied") {
+          CereveilAccessibilityService.showDenied(outcome.value.second ?: System.currentTimeMillis() + 5 * 60 * 1000)
+          return ChildEnrollmentResult.Success(Unit)
+        }
+      }
+    }
+    return when (val result = client.fetchAccessGrants(accessJwt)) {
       is ChildEnrollmentResult.Failure -> result
       is ChildEnrollmentResult.Success -> {
         grantStore.replace(result.value.map {
           LocalAccessGrant(it.packageName, Instant.ofEpochMilli(it.startsAt), Instant.ofEpochMilli(it.expiresAt))
         })
+        CereveilAccessibilityService.requestReevaluation(resetRequestPresentation = true)
         ChildEnrollmentResult.Success(Unit)
       }
     }
+  }
 
   private suspend fun refreshLocation(accessJwt: String, requestId: String?): ChildEnrollmentResult<Unit> {
     if (requestId == null) return ChildEnrollmentResult.Failure(ChildEnrollmentError.ValidationFailed)
@@ -129,6 +142,7 @@ class AndroidChildFeatureCommandProcessor(
           }
           override fun onProviderDisabled(provider: String) = Unit
           override fun onProviderEnabled(provider: String) = Unit
+          @Deprecated("Deprecated Android location callback")
           override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) = Unit
         }
         runCatching { manager.requestLocationUpdates(provider, 0, 0f, listener) }
