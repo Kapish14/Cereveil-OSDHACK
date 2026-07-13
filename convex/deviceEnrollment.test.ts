@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { api } from "./_generated/api";
 import { DataModel } from "./_generated/dataModel";
 import schema from "./schema";
-import { base64UrlEncode } from "./lib/encoding";
+import { base64UrlDecode, base64UrlEncode } from "./lib/encoding";
 
 const modules = import.meta.glob("./**/*.ts");
 const bootstrapGuardian = api.modules.guardianAuth.public.bootstrapGuardian;
@@ -42,6 +42,27 @@ const bootstrapArgs = {
 };
 
 type MutationCtx = GenericMutationCtx<DataModel>;
+
+const TEST_CHILD_JWT_PRIVATE_JWK = JSON.stringify({
+  kty: "EC",
+  x: "g4ANOE94AnKUcHGY74r--Czs78KcE1nc5ddnCmHYrdY",
+  y: "mBCgJJqq39IYtfSpnxUNfUT_yJU1tjPUOFvP5pRf1Eo",
+  crv: "P-256",
+  d: "xLctx56rutnUIBg7uCOmJKQCk9mL3OsYIiPv6yAEgo4",
+});
+const TEST_CHILD_JWT_PUBLIC_JWK = JSON.stringify({
+  kty: "EC",
+  x: "g4ANOE94AnKUcHGY74r--Czs78KcE1nc5ddnCmHYrdY",
+  y: "mBCgJJqq39IYtfSpnxUNfUT_yJU1tjPUOFvP5pRf1Eo",
+  crv: "P-256",
+});
+
+beforeEach(() => {
+  process.env.CHILD_DEVICE_JWT_PRIVATE_JWK = TEST_CHILD_JWT_PRIVATE_JWK;
+  process.env.CHILD_DEVICE_JWT_PUBLIC_JWK = TEST_CHILD_JWT_PUBLIC_JWK;
+  process.env.CHILD_DEVICE_JWT_KEY_ID = "cereveil-child-test-1";
+  process.env.CHILD_DEVICE_JWT_ISSUER = "https://cereveil.test";
+});
 
 function backend() {
   return convexTest({ schema, modules });
@@ -273,6 +294,23 @@ describe("Child Enrollment Completion", () => {
       environment: "dev",
     });
     expect(body.accessJwtExpiresAt - body.serverNow).toBe(15 * 60 * 1000);
+    const [encodedHeader] = body.accessJwt.split(".");
+    expect(JSON.parse(new TextDecoder().decode(base64UrlDecode(encodedHeader)))).toEqual({
+      alg: "ES256",
+      kid: "cereveil-child-test-1",
+      typ: "JWT",
+    });
+    const jwks = await t.fetch("/.well-known/jwks.json");
+    expect(jwks.status).toBe(200);
+    expect(await jwks.json()).toEqual({
+      keys: [expect.objectContaining({
+        alg: "ES256",
+        crv: "P-256",
+        kid: "cereveil-child-test-1",
+        kty: "EC",
+        use: "sig",
+      })],
+    });
     expect(Object.keys(body).sort()).toEqual([
       "accessJwt",
       "accessJwtExpiresAt",

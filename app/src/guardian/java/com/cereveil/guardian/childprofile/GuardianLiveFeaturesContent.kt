@@ -35,6 +35,7 @@ import com.cereveil.CereveilApplication
 import com.cereveil.R
 import com.cereveil.guardian.auth.AndroidGuardianOperationBootstrapper
 import com.cereveil.guardian.auth.SharedPreferencesGuardianInstallationIdProvider
+import com.cereveil.guardian.remoteaudio.GuardianRemoteAudioCard
 import com.cereveil.ui.CereveilCard
 import com.cereveil.ui.CereveilPrimaryButton
 import com.cereveil.ui.CereveilSecondaryButton
@@ -354,6 +355,8 @@ fun GuardianLiveFeaturesContent(childProfileId: String, safetyAlertsFirst: Boole
   state.message?.let { Text(it, color = MaterialTheme.colorScheme.error) }
 
   if (safetyAlertsFirst) SafetyAlertFeed(state.safetyAlerts)
+
+  GuardianRemoteAudioCard(childProfileId)
 
   Text("App blocking", style = MaterialTheme.typography.titleLarge)
   state.catalogSyncedAt?.let {

@@ -264,6 +264,14 @@ _Avoid_: Parent password, local unlock
 A one-time emergency credential retained by the Guardian that authorizes End Supervision when normal Guardian Approval is unavailable.
 _Avoid_: Guardian PIN, master password
 
+**Remote Audio Request**:
+A Guardian-initiated, Child-visible request to begin Remote Audio before its fixed two-minute deadline. The Child may start or decline it from the persistent notification; no microphone capture occurs until the Child starts it.
+_Avoid_: Automatic listening, silent command
+
 **Remote Audio Session**:
-A Guardian-initiated, live-only period of at most two minutes during which Child Mode automatically streams ambient audio, immediately displays a persistent notice, and allows the Child to stop listening at any time. Neither audio nor session history is retained after it ends, and another session cannot begin during the following three-minute cooldown.
+The live-only portion of an accepted Remote Audio Request during which Child Mode streams ambient audio, keeps a persistent Stop control available, and ends no later than the request's fixed two-minute deadline. Neither audio nor session history is retained after it ends, and another request cannot begin during the following three-minute cooldown.
 _Avoid_: Covert listening, silent monitoring, one-way audio
+
+**Remote Audio Cooldown**:
+The transient three-minute exclusion period after a Remote Audio Request terminates, whether declined, failed, expired, stopped, or completed, represented only by the earliest time another request may begin and deleted when that time arrives. It is operational enforcement state, not Remote Audio session history.
+_Avoid_: Remote Audio history, recent-session record

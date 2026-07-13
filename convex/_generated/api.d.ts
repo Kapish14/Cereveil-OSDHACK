@@ -47,6 +47,10 @@ import type * as modules_notifications_internal from "../modules/notifications/i
 import type * as modules_notifications_public from "../modules/notifications/public.js";
 import type * as modules_policies_guardian from "../modules/policies/guardian.js";
 import type * as modules_policies_internal from "../modules/policies/internal.js";
+import type * as modules_remoteAudio_child from "../modules/remoteAudio/child.js";
+import type * as modules_remoteAudio_guardian from "../modules/remoteAudio/guardian.js";
+import type * as modules_remoteAudio_internal from "../modules/remoteAudio/internal.js";
+import type * as modules_remoteAudio_model from "../modules/remoteAudio/model.js";
 import type * as modules_safetyAlerts_guardian from "../modules/safetyAlerts/guardian.js";
 import type * as modules_safetyAlerts_internal from "../modules/safetyAlerts/internal.js";
 import type * as modules_screenTime_guardian from "../modules/screenTime/guardian.js";
@@ -98,6 +102,10 @@ declare const fullApi: ApiFromModules<{
   "modules/notifications/public": typeof modules_notifications_public;
   "modules/policies/guardian": typeof modules_policies_guardian;
   "modules/policies/internal": typeof modules_policies_internal;
+  "modules/remoteAudio/child": typeof modules_remoteAudio_child;
+  "modules/remoteAudio/guardian": typeof modules_remoteAudio_guardian;
+  "modules/remoteAudio/internal": typeof modules_remoteAudio_internal;
+  "modules/remoteAudio/model": typeof modules_remoteAudio_model;
   "modules/safetyAlerts/guardian": typeof modules_safetyAlerts_guardian;
   "modules/safetyAlerts/internal": typeof modules_safetyAlerts_internal;
   "modules/screenTime/guardian": typeof modules_screenTime_guardian;

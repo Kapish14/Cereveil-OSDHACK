@@ -97,7 +97,7 @@ export async function createFeatureCommand(
     childProfileId: Id<"childProfiles">;
     activeEnrollmentId: Id<"activeEnrollments">;
     childDeviceId: Id<"childDevices">;
-    type: "refresh_location" | "refresh_screen_time" | "reconcile_access_grants";
+    type: "refresh_location" | "refresh_screen_time" | "reconcile_access_grants" | "request_remote_audio";
     referenceId: string;
     intentKey: string;
     serverNow: number;
@@ -175,7 +175,7 @@ export const acknowledgeFeatureCommand = internalMutation({
 });
 
 function validCommandPayload(command: {
-  type: "apply_policy_version" | "refresh_location" | "refresh_screen_time" | "reconcile_access_grants";
+  type: "apply_policy_version" | "refresh_location" | "refresh_screen_time" | "reconcile_access_grants" | "request_remote_audio";
   policyVersion?: number;
   referenceId?: string;
 }) {
@@ -203,6 +203,10 @@ async function featureResultIsDurable(
     const requestId = ctx.db.normalizeId("accessRequests", referenceId);
     const request = requestId === null ? null : await ctx.db.get("accessRequests", requestId);
     return request !== null && request.status !== "pending";
+  }
+  if (command.type === "request_remote_audio") {
+    const requestId = ctx.db.normalizeId("remoteAudioRequests", referenceId);
+    return requestId !== null && await ctx.db.get("remoteAudioRequests", requestId) !== null;
   }
   return false;
 }

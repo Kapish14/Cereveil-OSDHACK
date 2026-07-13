@@ -148,6 +148,8 @@ dependencies {
   add("childImplementation", platform(libs.firebase.bom))
   add("childImplementation", libs.firebase.messaging)
   add("childImplementation", libs.androidx.work.runtime.ktx)
+  add("childImplementation", libs.webrtc.android)
+  add("guardianImplementation", libs.webrtc.android)
 
   implementation(project(":core:domain"))
   implementation(project(":core:network"))

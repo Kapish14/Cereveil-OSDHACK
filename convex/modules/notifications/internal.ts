@@ -118,7 +118,7 @@ export const getDeliveryTargets = internalQuery({
       .take(10);
     return {
       category: "child_command" as const,
-      priority: command.type === "refresh_location" ||
+      priority: command.type === "refresh_location" || command.type === "request_remote_audio" ||
         (command.type === "reconcile_access_grants" && !command.intentKey.startsWith("access_outcome:"))
         ? "high" as const
         : "normal" as const,
@@ -137,17 +137,26 @@ export const recordDeliveryOutcome = internalMutation({
     serverNow: v.number(),
   },
   handler: async (ctx, args) => {
-    await ctx.db.insert("fcmDeliveryAttempts", {
-      ...args,
-      attemptedAt: args.serverNow,
-      expiresAt: args.serverNow + 7 * 24 * 60 * 60 * 1000,
-    });
     if (args.outcome === "invalid") {
       const token = await ctx.db.get("fcmTokens", args.fcmTokenId);
       if (token?.status === "active") {
         await ctx.db.patch("fcmTokens", token._id, { status: "invalid", invalidatedAt: args.serverNow });
       }
     }
+    if (args.recordKind === "childDeviceCommand") {
+      const commandId = ctx.db.normalizeId("childDeviceCommands", args.recordId);
+      const command = commandId === null ? null : await ctx.db.get("childDeviceCommands", commandId);
+      if (command === null || (command.type === "request_remote_audio" && command.status !== "pending")) return null;
+    } else {
+      const noticeId = ctx.db.normalizeId("guardianNotices", args.recordId);
+      const notice = noticeId === null ? null : await ctx.db.get("guardianNotices", noticeId);
+      if (notice === null) return null;
+    }
+    await ctx.db.insert("fcmDeliveryAttempts", {
+      ...args,
+      attemptedAt: args.serverNow,
+      expiresAt: args.serverNow + 7 * 24 * 60 * 60 * 1000,
+    });
     return null;
   },
 });

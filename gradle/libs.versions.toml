@@ -25,6 +25,7 @@ firebaseBom = "34.15.0"
 workManager = "2.11.1"
 playServicesMaps = "20.0.0"
 onnxruntime = "1.17.1"
+webrtc = "144.7559.09"
 
 [libraries]
 androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "androidxCore" }
@@ -62,6 +63,7 @@ firebase-messaging = { module = "com.google.firebase:firebase-messaging" }
 androidx-work-runtime-ktx = { module = "androidx.work:work-runtime-ktx", version.ref = "workManager" }
 play-services-maps = { module = "com.google.android.gms:play-services-maps", version.ref = "playServicesMaps" }
 onnxruntime = { module = "com.microsoft.onnxruntime:onnxruntime-android", version.ref = "onnxruntime" }
+webrtc-android = { module = "io.github.webrtc-sdk:android", version.ref = "webrtc" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "androidGradlePlugin" }

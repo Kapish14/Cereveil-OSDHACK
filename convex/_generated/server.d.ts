@@ -25,7 +25,10 @@ import type { DataModel } from "./dataModel.js";
  * Typesafe environment variables declared in `convex.config.ts`.
  */
 type Env = {
-  readonly CHILD_DEVICE_JWT_SECRET: string;
+  readonly CHILD_DEVICE_JWT_ISSUER: string;
+  readonly CHILD_DEVICE_JWT_KEY_ID: string;
+  readonly CHILD_DEVICE_JWT_PRIVATE_JWK: string;
+  readonly CHILD_DEVICE_JWT_PUBLIC_JWK: string;
   readonly CHILD_PUSH_TOKEN_ENCRYPTION_SECRET: string;
   readonly CLERK_JWT_ISSUER_DOMAIN: string;
   readonly FCM_CLIENT_EMAIL: string | undefined;
@@ -33,6 +36,7 @@ type Env = {
   readonly FCM_PROJECT_ID: string | undefined;
   readonly FCM_TOKEN_ENCRYPTION_ACTIVE_VERSION: string | undefined;
   readonly FCM_TOKEN_ENCRYPTION_KEY_V1: string | undefined;
+  readonly REMOTE_AUDIO_STUN_URLS: string | undefined;
 };
 
 /**

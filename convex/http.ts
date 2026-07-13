@@ -6,13 +6,27 @@ import { Id } from "./_generated/dataModel";
 import { base64UrlDecode, randomBase64Url, sha256Base64Url } from "./lib/encoding";
 import {
   CHILD_DEVICE_JWT_LIFETIME_MS,
+  childDeviceJwks,
   issueChildDeviceJwt,
+  validateChildDeviceJwtConfiguration,
 } from "./modules/deviceIdentity/jwt";
 import { encryptPushToken } from "./lib/sensitive";
 import { childDeviceHttpAction } from "./lib/childDeviceHttpAction";
 import { throwAppError } from "./lib/errors";
 
 const http = httpRouter();
+
+http.route({
+  path: "/.well-known/jwks.json",
+  method: "GET",
+  handler: httpAction(async () => new Response(JSON.stringify(childDeviceJwks()), {
+    status: 200,
+    headers: {
+      "content-type": "application/json",
+      "cache-control": "public, max-age=300",
+    },
+  })),
+});
 
 http.route({
   path: "/device-identity/enrollment/preview",
@@ -546,7 +560,9 @@ http.route({
     }
 
     // Validate signing configuration before consuming the one-use Enrollment Code.
-    if (env.CHILD_DEVICE_JWT_SECRET.length < 32) {
+    try {
+      validateChildDeviceJwtConfiguration();
+    } catch {
       return jsonResponse({ code: "ENROLLMENT_FAILED" }, 500);
     }
     if (!(await verifyEnrollmentProof(code, publicKeySpki, proof))) {

@@ -17,6 +17,9 @@ export type AppErrorCode =
   | "POLICY_CONFLICT"
   | "POLICY_UNSUPPORTED"
   | "POLICY_OPERATION_REUSED"
+  | "REMOTE_AUDIO_UNAVAILABLE"
+  | "REMOTE_AUDIO_BUSY"
+  | "REMOTE_AUDIO_COOLDOWN"
   | "INTERNAL_ERROR";
 
 const defaultMessages: Record<AppErrorCode, string> = {
@@ -36,6 +39,9 @@ const defaultMessages: Record<AppErrorCode, string> = {
   POLICY_CONFLICT: "The Supervision Policy changed on another Guardian Device.",
   POLICY_UNSUPPORTED: "The Child Device must be updated before this setting can be changed.",
   POLICY_OPERATION_REUSED: "The policy Save operation identifier was reused for different settings.",
+  REMOTE_AUDIO_UNAVAILABLE: "Remote Audio is not currently available.",
+  REMOTE_AUDIO_BUSY: "Another Guardian Device owns the current Remote Audio Request.",
+  REMOTE_AUDIO_COOLDOWN: "Remote Audio is cooling down.",
   INTERNAL_ERROR: "The request could not be completed.",
 };
 

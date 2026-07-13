@@ -61,7 +61,7 @@ Defines Convex tables, indexes, and database validators.
 Configures authentication providers accepted by Convex:
 
 - Clerk for Guardian Accounts.
-- Cereveil custom JWT provider for Child Devices.
+- Cereveil custom ES256 JWT provider for Child Devices, backed by Device Identity's public JWKS and a dedicated backend signing key distinct from device-held Keystore keys.
 
 This file verifies token providers; it does not replace application authorization.
 
@@ -350,7 +350,7 @@ Owns Screen Time Refresh Requests, bounded snapshot staging, atomic latest-only 
 
 ### `modules/remoteAudio`
 
-Owns Remote Audio session lifecycle, Child Device commands, WebRTC signaling rows, cooldown, and cleanup.
+Owns Remote Audio request and live-session lifecycle, typed `request_remote_audio` Child Device Commands, WebRTC signaling rows, cooldown, and cleanup. Command acknowledgement means the Child choice notification was presented, not that audio began.
 
 ## Request lifecycle
 
@@ -403,6 +403,8 @@ safe logging
   ↓
 sanitized HTTP response
 ```
+
+After enrollment or proof-of-possession token refresh, Child Mode supplies its fifteen-minute Child Device JWT to an authenticated Convex Android client. Realtime Child Device functions resolve the custom JWT identity and validate its credential, Active Enrollment, and Child Device claims against current backend state on every operation. Device enrollment and token issuance remain on the HTTP path; Remote Audio state and WebRTC signaling use the realtime Convex path rather than HTTP polling.
 
 ## Side-effect rule
 

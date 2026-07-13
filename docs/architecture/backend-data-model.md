@@ -657,6 +657,8 @@ Bounded on-demand work that asks Child Mode to replace the latest Screen Time Sn
   activeEnrollmentId: Id<"activeEnrollments">,
 
   requestedByGuardianAccountId: Id<"guardianAccounts">,
+  requestedByGuardianDeviceId: Id<"guardianDevices">,
+  operationId: string,
   status: "requested" | "uploading" | "completed" | "failed" | "expired",
   requestedAt: number,
   completedAt?: number,
@@ -814,9 +816,9 @@ Rules:
 - Use high-priority FCM only with an immediate Child-visible refresh notification.
 - Completed, failed, and expired request rows are deleted 15 minutes after becoming terminal.
 
-### `remoteAudioSessions`
+### `remoteAudioRequests`
 
-Remote Audio session state. Convex stores authorization/signaling/lifecycle state, not audio.
+Transient Remote Audio request and live-session state. Convex stores authorization/signaling/lifecycle state, not audio.
 
 ```ts
 {
@@ -828,22 +830,13 @@ Remote Audio session state. Convex stores authorization/signaling/lifecycle stat
   requestedByGuardianAccountId: Id<"guardianAccounts">,
 
   status:
-    | "requested"
+    | "awaiting_child"
     | "connecting"
-    | "active"
-    | "ended"
-    | "stopped_by_child"
-    | "expired"
-    | "failed",
+    | "active",
 
   requestedAt: number,
   startedAt?: number,
-  endedAt?: number,
   expiresAt: number,
-
-  cooldownUntil?: number,
-
-  failureReason?: "child_offline" | "webrtc_failed" | "permission_missing" | "timeout",
 }
 ```
 
@@ -851,8 +844,36 @@ Rules:
 
 - No audio is stored.
 - No transcript or recording is stored.
+- Creation requires an active Child Profile, Child Device, Active Enrollment, and authorization chain; Online Supervision Health; last-reported microphone and notification capabilities available; and at least one active FCM token owned by that Child Device.
+- Guardian Mode may disable creation from subscribed eligibility state, but the creation mutation rechecks every prerequisite transactionally.
+- `expiresAt` is fixed at `requestedAt + 2 minutes` and bounds the complete awaiting-child, connecting, and active lifecycle; it is never extended after the Child acts or WebRTC connects.
+- Convex schedules terminal cleanup at `expiresAt`. Request state also returns `serverNow` so both Android endpoints independently stop local media at the same deadline using a monotonic elapsed-time countdown rather than trusting subsequent device wall-clock changes.
+- The three-minute Remote Audio Cooldown begins at terminal transition time, including failure, timeout, Guardian stop, and Child stop.
+- Only live lifecycle states are stored. A terminal transition atomically removes the request, signaling rows, associated `request_remote_audio` Child Device Command, and its FCM delivery-attempt rows; creates or updates the minimal cooldown row; and returns its reason to the caller. Peers observe termination when the subscribed request disappears.
+- Guardian creation inserts `awaiting_child`. Only the authorized Child Device may transition it to `connecting` after the Child chooses Start audio and to `active` after its `PeerConnection` reports `CONNECTED`; Guardian Mode observes these states but cannot assert that capture began. Terminal transitions are first-writer-wins.
+- Only `requestedByGuardianDeviceId` may read or publish WebRTC signals and receive audio. Any active Guardian Device belonging to `requestedByGuardianAccountId` may terminate the session but cannot join or take over its media connection.
+- The backend transaction enforces at most one live request per Child Profile. A client-generated `operationId` makes creation retries idempotent; the initiating Guardian Device reuses its existing live request, while a different Guardian Device receives `REMOTE_AUDIO_BUSY` and cannot take over.
+- Creation during Remote Audio Cooldown returns `REMOTE_AUDIO_COOLDOWN` with `cooldownUntil`.
+- Authorized request state returns backend-configured STUN URLs. Development and demo environments may use `stun:stun.l.google.com:19302`; production requires explicit STUN configuration, and this version returns no TURN credentials.
 - Initial implementation uses STUN-only WebRTC, so `webrtc_failed` may occur on restrictive networks.
 - Session state is transient and should not become long-term history.
+
+### `remoteAudioCooldowns`
+
+Minimal transient enforcement state retained after a Remote Audio Session ends.
+
+```ts
+{
+  childProfileId: Id<"childProfiles">,
+  cooldownUntil: number,
+}
+```
+
+Rules:
+
+- Store at most one row per Child Profile.
+- The row contains no session reference, Guardian identity, session timestamps, or terminal outcome.
+- Delete the row when `cooldownUntil` arrives.
 
 ### `remoteAudioSignals`
 
@@ -860,9 +881,10 @@ Short-lived WebRTC signaling data.
 
 ```ts
 {
-  remoteAudioSessionId: Id<"remoteAudioSessions">,
+  remoteAudioRequestId: Id<"remoteAudioRequests">,
   sender: "guardian" | "child",
   type: "offer" | "answer" | "ice_candidate",
+  idempotencyKey: string,
   payload: string,
   createdAt: number,
   expiresAt: number,
@@ -871,8 +893,12 @@ Short-lived WebRTC signaling data.
 
 Rules:
 
-- Signals expire quickly.
+- Signals do not exist while a request is `awaiting_child`; they are created only after the Child chooses Start audio.
+- Signals expire no later than their Remote Audio Request.
 - Payload contains signaling data only, never audio.
+- Child Mode may publish exactly one offer and the initiating Guardian Device exactly one answer, each no larger than 64 KiB.
+- Each endpoint may publish at most 32 ICE candidates, each no larger than 4 KiB.
+- Sender/type authorization is enforced server-side. A client-generated idempotency key deduplicates retried publication for the same request and sender.
 
 ### `supervisionHealth`
 

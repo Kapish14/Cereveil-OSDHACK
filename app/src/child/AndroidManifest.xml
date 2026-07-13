@@ -5,6 +5,8 @@
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" />
 
@@ -16,6 +18,20 @@
     </queries>
 
     <application>
+        <activity
+            android:name="com.cereveil.child.remoteaudio.ChildRemoteAudioStartActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:noHistory="true"
+            android:theme="@style/Theme.Cereveil" />
+        <receiver
+            android:name="com.cereveil.child.remoteaudio.ChildRemoteAudioActionReceiver"
+            android:exported="false" />
+        <service
+            android:name="com.cereveil.child.remoteaudio.ChildRemoteAudioService"
+            android:exported="false"
+            android:foregroundServiceType="microphone"
+            android:stopWithTask="true" />
         <receiver
             android:name="com.cereveil.child.enrollment.ChildLocationMovementReceiver"
             android:exported="false" />

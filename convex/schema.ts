@@ -399,6 +399,7 @@ export default defineSchema({
       v.literal("refresh_location"),
       v.literal("refresh_screen_time"),
       v.literal("reconcile_access_grants"),
+      v.literal("request_remote_audio"),
     ),
     policyVersion: v.optional(v.number()),
     referenceId: v.optional(v.string()),
@@ -548,6 +549,54 @@ export default defineSchema({
   })
     .index("by_screen_time_snapshot_id", ["screenTimeSnapshotId"])
     .index("by_screen_time_snapshot_id_and_package_name", ["screenTimeSnapshotId", "packageName"]),
+
+  remoteAudioRequests: defineTable({
+    householdId: v.id("households"),
+    childProfileId: v.id("childProfiles"),
+    childDeviceId: v.id("childDevices"),
+    activeEnrollmentId: v.id("activeEnrollments"),
+    requestedByGuardianAccountId: v.id("guardianAccounts"),
+    requestedByGuardianDeviceId: v.id("guardianDevices"),
+    operationId: v.string(),
+    status: v.union(v.literal("awaiting_child"), v.literal("connecting"), v.literal("active")),
+    requestedAt: v.number(),
+    startedAt: v.optional(v.number()),
+    expiresAt: v.number(),
+  })
+    .index("by_child_profile_id", ["childProfileId"])
+    .index("by_child_profile_id_and_operation_id", ["childProfileId", "operationId"])
+    .index("by_active_enrollment_id", ["activeEnrollmentId"])
+    .index("by_expires_at", ["expiresAt"]),
+
+  remoteAudioCooldowns: defineTable({
+    childProfileId: v.id("childProfiles"),
+    cooldownUntil: v.number(),
+  })
+    .index("by_child_profile_id", ["childProfileId"])
+    .index("by_cooldown_until", ["cooldownUntil"]),
+
+  remoteAudioAggregateCounters: defineTable({
+    key: v.literal("global"),
+    requestsCreated: v.number(),
+    sessionsConnected: v.number(),
+  }).index("by_key", ["key"]),
+
+  remoteAudioSignals: defineTable({
+    remoteAudioRequestId: v.id("remoteAudioRequests"),
+    sender: v.union(v.literal("guardian"), v.literal("child")),
+    type: v.union(v.literal("offer"), v.literal("answer"), v.literal("ice_candidate")),
+    idempotencyKey: v.string(),
+    payload: v.string(),
+    createdAt: v.number(),
+    expiresAt: v.number(),
+  })
+    .index("by_remote_audio_request_id", ["remoteAudioRequestId"])
+    .index("by_remote_audio_request_id_and_sender_and_idempotency_key", [
+      "remoteAudioRequestId",
+      "sender",
+      "idempotencyKey",
+    ])
+    .index("by_expires_at", ["expiresAt"]),
 
   fcmDeliveryAttempts: defineTable({
     recordKind: v.union(v.literal("guardianNotice"), v.literal("childDeviceCommand")),

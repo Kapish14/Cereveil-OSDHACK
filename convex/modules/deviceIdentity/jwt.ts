@@ -7,9 +7,10 @@ export type ChildDeviceJwtClaims = {
   credentialId: string;
   activeEnrollmentId: string;
   childDeviceId: string;
+  sub: string;
   iat: number;
   exp: number;
-  iss: "cereveil-device-identity";
+  iss: string;
   aud: "cereveil-child-api";
 };
 
@@ -17,17 +18,18 @@ export async function issueChildDeviceJwt(
   identity: Pick<ChildDeviceJwtClaims, "credentialId" | "activeEnrollmentId" | "childDeviceId">,
   serverNow: number,
 ) {
-  const header = base64UrlJson({ alg: "HS256", typ: "JWT" });
+  const header = base64UrlJson({ alg: "ES256", kid: env.CHILD_DEVICE_JWT_KEY_ID, typ: "JWT" });
   const claims: ChildDeviceJwtClaims = {
     ...identity,
+    sub: `child-device:${identity.childDeviceId}`,
     iat: Math.floor(serverNow / 1000),
     exp: Math.floor((serverNow + CHILD_DEVICE_JWT_LIFETIME_MS) / 1000),
-    iss: "cereveil-device-identity",
+    iss: env.CHILD_DEVICE_JWT_ISSUER,
     aud: "cereveil-child-api",
   };
   const payload = base64UrlJson(claims);
   const signingInput = `${header}.${payload}`;
-  const signature = await hmac(signingInput);
+  const signature = await sign(signingInput);
   return `${signingInput}.${base64UrlEncode(signature)}`;
 }
 
@@ -35,18 +37,23 @@ export async function verifyChildDeviceJwt(token: string, serverNow: number) {
   const parts = token.split(".");
   if (parts.length !== 3) return null;
   const [header, payload, signature] = parts;
-  const expected = await hmac(`${header}.${payload}`);
-  if (!constantTimeEqual(expected, base64UrlDecode(signature))) return null;
   try {
     const decodedHeader = JSON.parse(new TextDecoder().decode(base64UrlDecode(header))) as {
       alg?: string;
+      kid?: string;
       typ?: string;
     };
-    if (decodedHeader.alg !== "HS256" || decodedHeader.typ !== "JWT") return null;
+    if (
+      decodedHeader.alg !== "ES256" ||
+      decodedHeader.kid !== env.CHILD_DEVICE_JWT_KEY_ID ||
+      decodedHeader.typ !== "JWT"
+    ) return null;
+    if (!await verify(`${header}.${payload}`, base64UrlDecode(signature))) return null;
     const claims = JSON.parse(new TextDecoder().decode(base64UrlDecode(payload))) as ChildDeviceJwtClaims;
     if (
-      claims.iss !== "cereveil-device-identity" ||
+      claims.iss !== env.CHILD_DEVICE_JWT_ISSUER ||
       claims.aud !== "cereveil-child-api" ||
+      claims.sub !== `child-device:${claims.childDeviceId}` ||
       typeof claims.credentialId !== "string" ||
       typeof claims.activeEnrollmentId !== "string" ||
       typeof claims.childDeviceId !== "string" ||
@@ -57,37 +64,74 @@ export async function verifyChildDeviceJwt(token: string, serverNow: number) {
       claims.iat > Math.floor(serverNow / 1000) + 60 ||
       claims.exp - claims.iat > CHILD_DEVICE_JWT_LIFETIME_MS / 1000 ||
       claims.exp <= Math.floor(serverNow / 1000)
-    ) {
-      return null;
-    }
+    ) return null;
     return claims;
   } catch {
     return null;
   }
 }
 
+export function childDeviceJwks() {
+  const publicJwk = parseJwk(env.CHILD_DEVICE_JWT_PUBLIC_JWK, false);
+  return {
+    keys: [{
+      ...publicJwk,
+      alg: "ES256",
+      kid: env.CHILD_DEVICE_JWT_KEY_ID,
+      use: "sig",
+    }],
+  };
+}
+
+export function validateChildDeviceJwtConfiguration() {
+  parseJwk(env.CHILD_DEVICE_JWT_PRIVATE_JWK, true);
+  parseJwk(env.CHILD_DEVICE_JWT_PUBLIC_JWK, false);
+  if (env.CHILD_DEVICE_JWT_KEY_ID.length < 1) throw new Error("Child Device JWT key ID is missing.");
+  const issuer = new URL(env.CHILD_DEVICE_JWT_ISSUER);
+  if (issuer.protocol !== "https:") throw new Error("Child Device JWT issuer must use HTTPS.");
+}
+
 function base64UrlJson(value: unknown) {
   return base64UrlEncode(new TextEncoder().encode(JSON.stringify(value)));
 }
 
-async function hmac(value: string) {
-  const secret = env.CHILD_DEVICE_JWT_SECRET;
-  if (secret.length < 32) {
-    throw new Error("CHILD_DEVICE_JWT_SECRET must contain at least 32 characters.");
-  }
+async function sign(value: string) {
   const key = await crypto.subtle.importKey(
-    "raw",
-    new TextEncoder().encode(secret),
-    { name: "HMAC", hash: "SHA-256" },
+    "jwk",
+    parseJwk(env.CHILD_DEVICE_JWT_PRIVATE_JWK, true),
+    { name: "ECDSA", namedCurve: "P-256" },
     false,
     ["sign"],
   );
-  return new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(value)));
+  return new Uint8Array(await crypto.subtle.sign(
+    { name: "ECDSA", hash: "SHA-256" },
+    key,
+    new TextEncoder().encode(value),
+  ));
 }
 
-function constantTimeEqual(left: Uint8Array, right: Uint8Array) {
-  if (left.length !== right.length) return false;
-  let difference = 0;
-  for (let index = 0; index < left.length; index += 1) difference |= left[index] ^ right[index];
-  return difference === 0;
+async function verify(value: string, signature: Uint8Array) {
+  const key = await crypto.subtle.importKey(
+    "jwk",
+    parseJwk(env.CHILD_DEVICE_JWT_PUBLIC_JWK, false),
+    { name: "ECDSA", namedCurve: "P-256" },
+    false,
+    ["verify"],
+  );
+  return await crypto.subtle.verify(
+    { name: "ECDSA", hash: "SHA-256" },
+    key,
+    new Uint8Array(signature).buffer as ArrayBuffer,
+    new TextEncoder().encode(value),
+  );
+}
+
+function parseJwk(value: string, requirePrivate: boolean): JsonWebKey {
+  const jwk = JSON.parse(value) as JsonWebKey;
+  if (
+    jwk.kty !== "EC" || jwk.crv !== "P-256" ||
+    typeof jwk.x !== "string" || typeof jwk.y !== "string" ||
+    (requirePrivate && typeof jwk.d !== "string")
+  ) throw new Error("Child Device JWT key configuration is invalid.");
+  return jwk;
 }

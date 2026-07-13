@@ -7,11 +7,32 @@ import { deleteEnrollmentFeatureBatch } from "../featureLifecycle/internal";
 const BATCH = 50;
 
 async function drainEnrollment(ctx: MutationCtx, enrollmentId: Id<"activeEnrollments">) {
+  const remoteRequest = await ctx.db.query("remoteAudioRequests")
+    .withIndex("by_active_enrollment_id", (q) => q.eq("activeEnrollmentId", enrollmentId)).unique();
+  if (remoteRequest !== null) {
+    const signals = await ctx.db.query("remoteAudioSignals")
+      .withIndex("by_remote_audio_request_id", (q) => q.eq("remoteAudioRequestId", remoteRequest._id)).take(70);
+    for (const signal of signals) await ctx.db.delete("remoteAudioSignals", signal._id);
+    await ctx.db.delete("remoteAudioRequests", remoteRequest._id);
+  }
+  const enrollment = await ctx.db.get("activeEnrollments", enrollmentId);
+  if (enrollment !== null) {
+    const cooldown = await ctx.db.query("remoteAudioCooldowns")
+      .withIndex("by_child_profile_id", (q) => q.eq("childProfileId", enrollment.childProfileId)).unique();
+    if (cooldown !== null) await ctx.db.delete("remoteAudioCooldowns", cooldown._id);
+  }
   if (!await deleteEnrollmentFeatureBatch(ctx, enrollmentId)) return false;
   const commands = await ctx.db.query("childDeviceCommands")
     .withIndex("by_active_enrollment_id_and_status", (q) => q.eq("activeEnrollmentId", enrollmentId)).take(BATCH);
   if (commands.length > 0) {
-    for (const row of commands) await ctx.db.delete("childDeviceCommands", row._id);
+    for (const row of commands) {
+      if (row.type === "request_remote_audio") {
+        const attempts = await ctx.db.query("fcmDeliveryAttempts")
+          .withIndex("by_record_kind_and_record_id", (q) => q.eq("recordKind", "childDeviceCommand").eq("recordId", row._id)).take(BATCH);
+        for (const attempt of attempts) await ctx.db.delete("fcmDeliveryAttempts", attempt._id);
+      }
+      await ctx.db.delete("childDeviceCommands", row._id);
+    }
     return false;
   }
   const notice = (await ctx.db.query("guardianNotices")

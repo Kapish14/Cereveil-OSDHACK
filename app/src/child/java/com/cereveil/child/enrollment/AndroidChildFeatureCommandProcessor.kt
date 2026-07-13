@@ -18,6 +18,7 @@ import com.cereveil.child.protection.ChildAccessGrantStore
 import com.cereveil.child.protection.LocalAccessGrant
 import com.cereveil.child.protection.ChildExemptApps
 import com.cereveil.child.protection.CereveilAccessibilityService
+import com.cereveil.child.remoteaudio.ChildRemoteAudioNotice
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -37,10 +38,20 @@ class AndroidChildFeatureCommandProcessor(
       "reconcile_access_grants" -> reconcileAccess(accessJwt, command.referenceId)
       "refresh_location" -> refreshLocation(accessJwt, command.referenceId)
       "refresh_screen_time" -> refreshScreenTime(accessJwt, command.referenceId)
+      "request_remote_audio" -> presentRemoteAudio(command.referenceId, command.expiresAt)
       else -> client.rejectCommand(accessJwt, command.commandId, "unsupported_command")
     }
     if (performed is ChildEnrollmentResult.Failure || command.type !in SUPPORTED) return performed
     return client.acknowledgeCommand(accessJwt, command.commandId)
+  }
+
+  private fun presentRemoteAudio(requestId: String?, expiresAt: Long): ChildEnrollmentResult<Unit> {
+    if (requestId == null) return ChildEnrollmentResult.Failure(ChildEnrollmentError.ValidationFailed)
+    return if (ChildRemoteAudioNotice.present(context, requestId, expiresAt)) {
+      ChildEnrollmentResult.Success(Unit)
+    } else {
+      ChildEnrollmentResult.Failure(ChildEnrollmentError.ValidationFailed)
+    }
   }
 
   override suspend fun maintain(
@@ -170,6 +181,6 @@ class AndroidChildFeatureCommandProcessor(
   }
 
   private companion object {
-    val SUPPORTED = setOf("reconcile_access_grants", "refresh_location", "refresh_screen_time")
+    val SUPPORTED = setOf("reconcile_access_grants", "refresh_location", "refresh_screen_time", "request_remote_audio")
   }
 }
