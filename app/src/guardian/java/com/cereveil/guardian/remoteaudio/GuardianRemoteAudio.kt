@@ -38,9 +38,9 @@ import com.cereveil.guardian.string
 import com.cereveil.guardian.stringOrNull
 import com.cereveil.guardian.auth.AndroidGuardianOperationBootstrapper
 import com.cereveil.guardian.auth.SharedPreferencesGuardianInstallationIdProvider
-import com.cereveil.ui.CereveilCard
-import com.cereveil.ui.CereveilPrimaryButton
-import com.cereveil.ui.CereveilSecondaryButton
+import com.cereveil.guardian.ui.GuardianCard as CereveilCard
+import com.cereveil.guardian.ui.GuardianPrimaryButton as CereveilPrimaryButton
+import com.cereveil.guardian.ui.GuardianSecondaryButton as CereveilSecondaryButton
 import dev.convex.android.ConvexClient
 import dev.convex.android.ConvexClientWithAuth
 import java.util.UUID

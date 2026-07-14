@@ -18,10 +18,10 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import com.cereveil.CereveilApplication
 import com.cereveil.guardian.auth.AndroidGuardianOperationBootstrapper
 import com.cereveil.guardian.auth.SharedPreferencesGuardianInstallationIdProvider
-import com.cereveil.ui.CereveilCard
-import com.cereveil.ui.CereveilNotice
-import com.cereveil.ui.CereveilPrimaryButton
-import com.cereveil.ui.CereveilSecondaryButton
+import com.cereveil.guardian.ui.GuardianCard as CereveilCard
+import com.cereveil.guardian.ui.GuardianNotice as CereveilNotice
+import com.cereveil.guardian.ui.GuardianPrimaryButton as CereveilPrimaryButton
+import com.cereveil.guardian.ui.GuardianSecondaryButton as CereveilSecondaryButton
 
 @Composable
 fun GuardianDeviceReplacementAction(

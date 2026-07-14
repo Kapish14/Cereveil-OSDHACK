@@ -22,16 +22,22 @@ import com.cereveil.guardian.auth.GuardianStartupViewModel
 import com.cereveil.guardian.childprofile.ChildProfileSummary
 import com.cereveil.guardian.childprofile.GuardianChildProfileSetupContent
 import com.cereveil.guardian.enrollment.GuardianEnrollmentContent
-import com.cereveil.ui.CereveilCard
-import com.cereveil.ui.CereveilHeader
-import com.cereveil.ui.CereveilNotice
-import com.cereveil.ui.CereveilPrimaryButton
-import com.cereveil.ui.CereveilScreen
-import com.cereveil.ui.CereveilTitle
+import com.cereveil.guardian.ui.GuardianCard
+import com.cereveil.guardian.ui.GuardianHeader
+import com.cereveil.guardian.ui.GuardianNotice
+import com.cereveil.guardian.ui.GuardianPrimaryButton
+import com.cereveil.guardian.ui.GuardianScreen
+import com.cereveil.guardian.ui.GuardianTheme
+import com.cereveil.guardian.ui.GuardianTitle
 import com.clerk.ui.auth.AuthView
 
 @Composable
 fun RoleStartupContent(modifier: Modifier = Modifier) {
+  GuardianTheme { GuardianRoleStartupContent(modifier) }
+}
+
+@Composable
+private fun GuardianRoleStartupContent(modifier: Modifier = Modifier) {
   val startupViewModel: GuardianStartupViewModel = viewModel()
   val route by startupViewModel.route.collectAsStateWithLifecycle()
   val authSessionKey by startupViewModel.setupAuthSessionKey.collectAsStateWithLifecycle()
@@ -102,9 +108,9 @@ fun RoleStartupContent(modifier: Modifier = Modifier) {
 
 @Composable
 private fun GuardianAuthContent(onAuthComplete: () -> Unit) {
-  CereveilScreen(scrollable = false) {
-    CereveilHeader(role = "Guardian")
-    CereveilTitle(
+  GuardianScreen(scrollable = false) {
+    GuardianHeader()
+    GuardianTitle(
       title = "Your extra set of eyes in the digital world.",
       supportingText =
         "Set up app controls, safety alerts, and location features that stay visible on your child’s phone.",
@@ -119,8 +125,8 @@ private fun GuardianAuthContent(onAuthComplete: () -> Unit) {
 
 @Composable
 private fun GuardianLoadingContent() {
-  CereveilScreen(scrollable = false) {
-    CereveilHeader(role = "Guardian")
+  GuardianScreen(scrollable = false) {
+    GuardianHeader()
     androidx.compose.foundation.layout.Column(
       modifier = Modifier.fillMaxWidth().weight(1f),
       horizontalAlignment = Alignment.CenterHorizontally,
@@ -134,27 +140,27 @@ private fun GuardianLoadingContent() {
 
 @Composable
 private fun GuardianTrustContent(onContinue: () -> Unit) {
-  CereveilScreen {
-    CereveilHeader(role = "Guardian", compact = true)
+  GuardianScreen {
+    GuardianHeader(compact = true)
     Text("Getting started • 1 of 2", style = MaterialTheme.typography.labelSmall)
-    CereveilTitle(
+    GuardianTitle(
       title = "Protection works best when everyone understands it",
       supportingText =
         "Cereveil stays visible on your child’s phone and only uses the information needed for the features you choose.",
     )
-    CereveilCard {
+    GuardianCard {
       Text("Visible by design", style = MaterialTheme.typography.titleLarge)
       Text("Your child can see when Cereveil protection is active.")
     }
-    CereveilCard {
+    GuardianCard {
       Text("Privacy-first defaults", style = MaterialTheme.typography.titleLarge)
       Text("Optional monitoring starts off until you choose it.")
     }
-    CereveilCard {
+    GuardianCard {
       Text("Have both phones ready", style = MaterialTheme.typography.titleLarge)
       Text("You’ll finish setup together on the Child Device.")
     }
-    CereveilPrimaryButton(text = "Continue to child setup", onClick = onContinue)
+    GuardianPrimaryButton(text = "Continue to child setup", onClick = onContinue)
   }
 }
 
@@ -165,11 +171,11 @@ private fun GuardianBlockingState(
   action: String? = null,
   onAction: () -> Unit = {},
 ) {
-  CereveilScreen {
-    CereveilHeader(role = "Guardian", compact = true)
-    CereveilTitle(title, message)
-    CereveilNotice("Your account and Child data remain protected.")
-    if (action != null) CereveilPrimaryButton(action, onAction)
+  GuardianScreen {
+    GuardianHeader(compact = true)
+    GuardianTitle(title, message)
+    GuardianNotice("Your account and Child data remain protected.")
+    if (action != null) GuardianPrimaryButton(action, onAction)
   }
 }
 

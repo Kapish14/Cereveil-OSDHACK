@@ -110,6 +110,7 @@ dependencies {
   implementation(libs.androidx.compose.ui)
   implementation(libs.androidx.compose.ui.tooling.preview)
   implementation(libs.androidx.compose.material3)
+  add("guardianImplementation", libs.androidx.compose.material.icons.extended)
   implementation(libs.compose.unstyled)
   implementation(libs.compose.interaction.capabilities)
   implementation(libs.ripple.indication)

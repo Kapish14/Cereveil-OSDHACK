@@ -26,14 +26,18 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
+import com.cereveil.BuildConfig
 import com.cereveil.CereveilApplication
 import com.cereveil.guardian.auth.AndroidGuardianOperationBootstrapper
 import com.cereveil.guardian.auth.SharedPreferencesGuardianInstallationIdProvider
-import com.cereveil.ui.CereveilCard
-import com.cereveil.ui.CereveilSecondaryButton
+import com.cereveil.guardian.ui.GuardianCard as CereveilCard
+import com.cereveil.guardian.ui.GuardianSecondaryButton as CereveilSecondaryButton
 
 @Composable
-fun GuardianPolicyContent(childProfileId: String) {
+fun GuardianPolicyContent(
+  childProfileId: String,
+  showDevelopmentSafetyControls: Boolean = BuildConfig.DEBUG,
+) {
   val application = LocalContext.current.applicationContext as CereveilApplication
   val factory = remember(childProfileId) { viewModelFactory { initializer {
     GuardianPolicyViewModel(childProfileId, ConvexGuardianPolicyClient(
@@ -52,28 +56,30 @@ fun GuardianPolicyContent(childProfileId: String) {
       color = MaterialTheme.colorScheme.error,
     )
     is GuardianPolicyUiState.Ready -> {
-      Text("Supervision settings", style = MaterialTheme.typography.titleLarge)
+      Text("Protection controls", style = MaterialTheme.typography.titleLarge)
       PolicyToggle(PolicyControl.AppBlocking, current, model::update)
-      Text("Active Screen Safety", style = MaterialTheme.typography.titleLarge)
-      SafetyDetectorCard(
-        title = "Scam Text Detection",
-        detector = GuardianSafetyDetector.ScamText,
-        desired = current.policy.desired.scamTextSafety,
-        applied = current.policy.applied?.scamTextSafety,
-        apps = current.catalogApps,
-        saving = current.savingFeature == PolicyFeature.ScamTextSafety,
-        onChange = model::updateSafety,
-      )
-      SafetyDetectorCard(
-        title = "NSFW Screen Detection",
-        detector = GuardianSafetyDetector.NsfwScreen,
-        desired = current.policy.desired.nsfwScreenSafety,
-        applied = current.policy.applied?.nsfwScreenSafety,
-        apps = current.catalogApps,
-        saving = current.savingFeature == PolicyFeature.NsfwScreenSafety,
-        available = current.policy.supportsNsfwScreenDetection,
-        onChange = model::updateSafety,
-      )
+      if (showDevelopmentSafetyControls) {
+        Text("Active Screen Safety", style = MaterialTheme.typography.titleLarge)
+        SafetyDetectorCard(
+          title = "Scam Text Detection",
+          detector = GuardianSafetyDetector.ScamText,
+          desired = current.policy.desired.scamTextSafety,
+          applied = current.policy.applied?.scamTextSafety,
+          apps = current.catalogApps,
+          saving = current.savingFeature == PolicyFeature.ScamTextSafety,
+          onChange = model::updateSafety,
+        )
+        SafetyDetectorCard(
+          title = "NSFW Screen Detection",
+          detector = GuardianSafetyDetector.NsfwScreen,
+          desired = current.policy.desired.nsfwScreenSafety,
+          applied = current.policy.applied?.nsfwScreenSafety,
+          apps = current.catalogApps,
+          saving = current.savingFeature == PolicyFeature.NsfwScreenSafety,
+          available = current.policy.supportsNsfwScreenDetection,
+          onChange = model::updateSafety,
+        )
+      }
       PolicyToggle(PolicyControl.LocationSharing, current, model::update)
       PolicyToggle(PolicyControl.ScreenTime, current, model::update)
       current.updateError?.let { error ->

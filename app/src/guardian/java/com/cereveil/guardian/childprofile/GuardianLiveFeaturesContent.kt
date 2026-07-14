@@ -9,12 +9,19 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Block
+import androidx.compose.material.icons.filled.Security
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -33,6 +40,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.cereveil.CereveilApplication
+import com.cereveil.BuildConfig
 import com.cereveil.R
 import com.cereveil.guardian.arrayOrEmpty
 import com.cereveil.guardian.boolean
@@ -44,9 +52,14 @@ import com.cereveil.guardian.stringOrNull
 import com.cereveil.guardian.auth.AndroidGuardianOperationBootstrapper
 import com.cereveil.guardian.auth.SharedPreferencesGuardianInstallationIdProvider
 import com.cereveil.guardian.remoteaudio.GuardianRemoteAudioCard
-import com.cereveil.ui.CereveilCard
-import com.cereveil.ui.CereveilPrimaryButton
-import com.cereveil.ui.CereveilSecondaryButton
+import com.cereveil.guardian.ui.GuardianCard as CereveilCard
+import com.cereveil.guardian.ui.GuardianPrimaryButton as CereveilPrimaryButton
+import com.cereveil.guardian.ui.GuardianSecondaryButton as CereveilSecondaryButton
+import com.cereveil.guardian.ui.GuardianFeatureCard
+import com.cereveil.guardian.ui.GuardianGreen
+import com.cereveil.guardian.ui.GuardianOrange
+import com.cereveil.guardian.ui.GuardianPrimary
+import com.cereveil.guardian.ui.GuardianSectionHeader
 import com.google.android.gms.maps.CameraUpdateFactory
 import com.google.android.gms.maps.MapView
 import com.google.android.gms.maps.model.LatLng
@@ -109,6 +122,8 @@ data class GuardianLiveFeaturesState(
   val safetyAlerts: List<GuardianSafetyAlert> = emptyList(),
   val message: String? = null,
 )
+
+enum class GuardianFeatureSection { Home, Location, Activity, Settings }
 
 class GuardianLiveFeaturesViewModel(
   application: Application,
@@ -377,7 +392,12 @@ class GuardianLiveFeaturesViewModel(
 }
 
 @Composable
-fun GuardianLiveFeaturesContent(childProfileId: String, safetyAlertsFirst: Boolean = false) {
+fun GuardianLiveFeaturesContent(
+  childProfileId: String,
+  section: GuardianFeatureSection = GuardianFeatureSection.Home,
+  openSafetyAlerts: Boolean = false,
+  onOpenSettings: () -> Unit = {},
+) {
   val application = LocalContext.current.applicationContext as Application
   val factory = remember(childProfileId) { viewModelFactory { initializer {
     GuardianLiveFeaturesViewModel(application, childProfileId)
@@ -388,15 +408,68 @@ fun GuardianLiveFeaturesContent(childProfileId: String, safetyAlertsFirst: Boole
     onStopOrDispose { model.setVisible(false) }
   }
   val state by model.state.collectAsStateWithLifecycle()
+  val safetyAlertsRequester = remember { BringIntoViewRequester() }
   var showingApps by rememberSaveable(childProfileId) { mutableStateOf(false) }
   var appSearch by rememberSaveable(childProfileId) { mutableStateOf("") }
   if (state.loading) { CircularProgressIndicator(); return }
   state.message?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+  LaunchedEffect(openSafetyAlerts) {
+    if (openSafetyAlerts) safetyAlertsRequester.bringIntoView()
+  }
 
-  if (safetyAlertsFirst) SafetyAlertFeed(state.safetyAlerts, model::clearSafetyAlerts)
+  if (section == GuardianFeatureSection.Home) {
+    GuardianSectionHeader("Today’s Overview")
+    CereveilCard {
+      Text(
+        if (state.screenLoading) "Checking today’s activity…" else formatDuration(state.screenTime.sumOf(GuardianScreenTimeApp::totalMs)),
+        style = MaterialTheme.typography.headlineMedium,
+      )
+      Text("Total screen time today", color = MaterialTheme.colorScheme.onSurfaceVariant)
+      state.screenTime.take(3).forEach { app ->
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+          Text(app.label, modifier = Modifier.weight(1f))
+          Text(formatDuration(app.totalMs), color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+      }
+    }
+    if (BuildConfig.DEBUG) {
+      GuardianSectionHeader("AI Safety Hub")
+      GuardianFeatureCard(
+        icon = Icons.Default.Security,
+        iconTint = GuardianGreen,
+        title = "Scam Text Detection",
+        subtitle = "Warn about likely scam messages in selected apps",
+        status = "Manage",
+        onClick = onOpenSettings,
+      )
+      GuardianFeatureCard(
+        icon = Icons.Default.VisibilityOff,
+        iconTint = GuardianOrange,
+        title = "NSFW Screen Detection",
+        subtitle = "Blur likely explicit content in selected apps",
+        status = "Manage",
+        onClick = onOpenSettings,
+      )
+    }
+    GuardianSectionHeader("Device Supervision")
+    GuardianFeatureCard(
+      icon = Icons.Default.Block,
+      iconTint = GuardianPrimary,
+      title = "App Blocking",
+      subtitle = "Block apps now or on a recurring schedule",
+      status = "Manage",
+      onClick = onOpenSettings,
+    )
+    GuardianSectionHeader("Remote Operations")
+    GuardianRemoteAudioCard(childProfileId)
+    SafetyAlertFeed(
+      state.safetyAlerts,
+      model::clearSafetyAlerts,
+      modifier = Modifier.bringIntoViewRequester(safetyAlertsRequester),
+    )
+  }
 
-  GuardianRemoteAudioCard(childProfileId)
-
+  if (section == GuardianFeatureSection.Settings) {
   Text("App blocking", style = MaterialTheme.typography.titleLarge)
   state.catalogSyncedAt?.let {
     Text("App list updated ${(System.currentTimeMillis() - it).coerceAtLeast(0) / 60_000} min ago")
@@ -461,27 +534,33 @@ fun GuardianLiveFeaturesContent(childProfileId: String, safetyAlertsFirst: Boole
       CereveilSecondaryButton(text = "Add schedule", onClick = { editingSchedule = true })
     }
   } }
+  }
 
-  if (state.accessRequests.isNotEmpty()) Text("Access requests", style = MaterialTheme.typography.titleLarge)
-  state.accessRequests.forEach { request -> CereveilCard {
-    Text("${request.packageName} requested access")
-    val remainingMinutes = request.scheduledCoverageEnd?.let {
-      ((it - System.currentTimeMillis()).coerceAtLeast(0) / 60_000).toInt()
+  if (section == GuardianFeatureSection.Home) {
+    if (state.accessRequests.isNotEmpty()) Text("Access requests", style = MaterialTheme.typography.titleLarge)
+    state.accessRequests.forEach { request ->
+      CereveilCard {
+        Text("${request.packageName} requested access")
+        val remainingMinutes = request.scheduledCoverageEnd?.let {
+          ((it - System.currentTimeMillis()).coerceAtLeast(0) / 60_000).toInt()
+        }
+        listOf(15, 30, 45, 60).filter { remainingMinutes == null || it <= remainingMinutes }.forEach { minutes ->
+          CereveilSecondaryButton(text = "$minutes min", onClick = {
+            model.resolveAccess(request.requestId, true, minutes)
+          })
+        }
+        if (request.blockKind == "scheduled") {
+          CereveilSecondaryButton(text = "Until block ends", onClick = {
+            model.resolveAccess(request.requestId, true, 60, untilBlockEnds = true)
+          })
+        }
+        Text("Once allowed, access stays active until its shown expiry and cannot be revoked early.", style = MaterialTheme.typography.labelSmall)
+        CereveilSecondaryButton(text = "Deny", onClick = { model.resolveAccess(request.requestId, false) })
+      }
     }
-    listOf(15, 30, 45, 60).filter { remainingMinutes == null || it <= remainingMinutes }.forEach { minutes ->
-      CereveilSecondaryButton(text = "$minutes min", onClick = {
-        model.resolveAccess(request.requestId, true, minutes)
-      })
-    }
-    if (request.blockKind == "scheduled") {
-      CereveilSecondaryButton(text = "Until block ends", onClick = {
-        model.resolveAccess(request.requestId, true, 60, untilBlockEnds = true)
-      })
-    }
-    Text("Once allowed, access stays active until its shown expiry and cannot be revoked early.", style = MaterialTheme.typography.labelSmall)
-    CereveilSecondaryButton(text = "Deny", onClick = { model.resolveAccess(request.requestId, false) })
-  } }
+  }
 
+  if (section == GuardianFeatureSection.Location) {
   Text("Latest location", style = MaterialTheme.typography.titleLarge)
   state.location?.let { location ->
     val hasEmbeddedMap = stringResource(R.string.google_maps_key).isNotBlank()
@@ -502,7 +581,9 @@ fun GuardianLiveFeaturesContent(childProfileId: String, safetyAlertsFirst: Boole
   })
   if (state.locationRefreshStatus == "failed") Text("The latest refresh failed; the previous location is preserved.")
   if (state.locationRefreshStatus == "expired") Text("The latest refresh timed out; the previous location is preserved.")
+  }
 
+  if (section == GuardianFeatureSection.Activity) {
   Text("Today’s screen time", style = MaterialTheme.typography.titleLarge)
   if (state.screenError) Text("Couldn’t refresh Screen Time.", color = MaterialTheme.colorScheme.error)
   else if (state.screenLoading) Text("Fetching current Android usage…")
@@ -520,22 +601,27 @@ fun GuardianLiveFeaturesContent(childProfileId: String, safetyAlertsFirst: Boole
     onClick = model::refreshScreenTime,
     enabled = !state.screenRefreshPending,
   )
-
-  if (!safetyAlertsFirst) SafetyAlertFeed(state.safetyAlerts, model::clearSafetyAlerts)
+  }
 }
 
 @Composable
-private fun SafetyAlertFeed(alerts: List<GuardianSafetyAlert>, onClear: () -> Unit) {
-  Text("Safety alerts", style = MaterialTheme.typography.titleLarge)
-  if (alerts.isEmpty()) Text("No safety alerts from the last week.")
-  else CereveilSecondaryButton(text = "Clear alerts", onClick = onClear)
-  alerts.forEach { alert -> CereveilCard {
-    Text(if (alert.type == "scam_text") "Possible scam message" else "NSFW screen content")
-    Text(alert.appLabel)
-    Text("${alert.confidenceBand.replaceFirstChar(Char::uppercase)} confidence")
-    val ageMinutes = (System.currentTimeMillis() - alert.occurredAt).coerceAtLeast(0) / 60_000
-    Text(if (ageMinutes < 1) "Just now" else "$ageMinutes min ago", style = MaterialTheme.typography.labelSmall)
-  } }
+private fun SafetyAlertFeed(
+  alerts: List<GuardianSafetyAlert>,
+  onClear: () -> Unit,
+  modifier: Modifier = Modifier,
+) {
+  Column(modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    Text("Safety alerts", style = MaterialTheme.typography.titleLarge)
+    if (alerts.isEmpty()) Text("No safety alerts from the last week.")
+    else CereveilSecondaryButton(text = "Clear alerts", onClick = onClear)
+    alerts.forEach { alert -> CereveilCard {
+      Text(if (alert.type == "scam_text") "Possible scam message" else "NSFW screen content")
+      Text(alert.appLabel)
+      Text("${alert.confidenceBand.replaceFirstChar(Char::uppercase)} confidence")
+      val ageMinutes = (System.currentTimeMillis() - alert.occurredAt).coerceAtLeast(0) / 60_000
+      Text(if (ageMinutes < 1) "Just now" else "$ageMinutes min ago", style = MaterialTheme.typography.labelSmall)
+    } }
+  }
 }
 
 @Composable

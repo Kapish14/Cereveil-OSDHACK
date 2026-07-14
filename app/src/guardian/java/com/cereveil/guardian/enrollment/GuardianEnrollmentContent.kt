@@ -29,13 +29,13 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.cereveil.CereveilApplication
-import com.cereveil.ui.CereveilCard
-import com.cereveil.ui.CereveilHeader
-import com.cereveil.ui.CereveilNotice
-import com.cereveil.ui.CereveilPrimaryButton
-import com.cereveil.ui.CereveilScreen
-import com.cereveil.ui.CereveilSecondaryButton
-import com.cereveil.ui.CereveilTitle
+import com.cereveil.guardian.ui.GuardianCard as CereveilCard
+import com.cereveil.guardian.ui.GuardianHeader as CereveilHeader
+import com.cereveil.guardian.ui.GuardianNotice as CereveilNotice
+import com.cereveil.guardian.ui.GuardianPrimaryButton as CereveilPrimaryButton
+import com.cereveil.guardian.ui.GuardianScreen as CereveilScreen
+import com.cereveil.guardian.ui.GuardianSecondaryButton as CereveilSecondaryButton
+import com.cereveil.guardian.ui.GuardianTitle as CereveilTitle
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.qrcode.QRCodeWriter
 import kotlinx.coroutines.delay
