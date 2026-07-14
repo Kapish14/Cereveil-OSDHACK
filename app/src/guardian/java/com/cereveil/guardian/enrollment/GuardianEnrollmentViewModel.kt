@@ -55,3 +55,27 @@ class GuardianEnrollmentViewModel(
     }
   }
 }
+
+class GuardianDeviceReplacementViewModel(
+  private val childProfileId: String,
+  private val client: GuardianEnrollmentClient,
+) : ViewModel() {
+  private val mutableState =
+    MutableStateFlow<GuardianDeviceReplacementUiState>(GuardianDeviceReplacementUiState.Confirming)
+  val state: StateFlow<GuardianDeviceReplacementUiState> = mutableState.asStateFlow()
+
+  fun replace() {
+    if (mutableState.value == GuardianDeviceReplacementUiState.Replacing) return
+    viewModelScope.launch {
+      mutableState.value = GuardianDeviceReplacementUiState.Replacing
+      mutableState.value = when (val result = client.replaceChildDevice(childProfileId)) {
+        is GuardianEnrollmentResult.Success -> GuardianDeviceReplacementUiState.Replaced
+        is GuardianEnrollmentResult.Failure -> GuardianDeviceReplacementUiState.Failure(result.error)
+      }
+    }
+  }
+
+  fun retry() {
+    mutableState.value = GuardianDeviceReplacementUiState.Confirming
+  }
+}

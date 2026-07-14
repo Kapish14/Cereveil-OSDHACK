@@ -1,6 +1,7 @@
 package com.cereveil.child.enrollment
 
 import android.Manifest
+import android.app.Activity
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
@@ -21,6 +22,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import com.cereveil.BuildConfig
+import com.cereveil.DebugEnrollmentContract
 import com.cereveil.ui.CereveilCard
 import com.cereveil.ui.CereveilHeader
 import com.cereveil.ui.CereveilNotice
@@ -42,12 +50,33 @@ fun ChildEnrollmentContent(modifier: Modifier = Modifier, model: ChildEnrollment
     )
   }
   val state by model.state.collectAsStateWithLifecycle()
+  val setupStatus by model.protectionSetupStatus.collectAsStateWithLifecycle()
+  val lifecycleOwner = LocalLifecycleOwner.current
+  val activity = context as? Activity
+  val debugEnrollmentPayload = if (BuildConfig.DEBUG) {
+    activity?.intent?.getStringExtra(DebugEnrollmentContract.EXTRA_QR_PAYLOAD)
+  } else {
+    null
+  }
   var guardianJoined by rememberSaveable { mutableStateOf(false) }
   val corePermissions = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
     model.refreshProtectionSetup()
   }
   val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
     model.refreshProtectionSetup()
+  }
+  DisposableEffect(lifecycleOwner) {
+    val observer = LifecycleEventObserver { _, event ->
+      if (event == Lifecycle.Event.ON_RESUME) model.refreshProtectionSetup()
+    }
+    lifecycleOwner.lifecycle.addObserver(observer)
+    onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+  }
+  LaunchedEffect(state, debugEnrollmentPayload) {
+    if (state == ChildEnrollmentUiState.ReadyToScan && debugEnrollmentPayload != null) {
+      activity?.intent?.removeExtra(DebugEnrollmentContract.EXTRA_QR_PAYLOAD)
+      model.scanned(debugEnrollmentPayload)
+    }
   }
 
   if (state == ChildEnrollmentUiState.ProtectionSetup && !guardianJoined) {
@@ -59,16 +88,23 @@ fun ChildEnrollmentContent(modifier: Modifier = Modifier, model: ChildEnrollment
     CereveilHeader(role = "Child", compact = state !is ChildEnrollmentUiState.Enrolled)
     when (val current = state) {
       ChildEnrollmentUiState.ProtectionSetup -> ProtectionSetup(
+        status = setupStatus,
         onAccessibility = { context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) },
         onUsage = { context.startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)) },
         onLocationAndMic = {
-          corePermissions.launch(
-            arrayOf(
-              Manifest.permission.ACCESS_COARSE_LOCATION,
-              Manifest.permission.ACCESS_FINE_LOCATION,
-              Manifest.permission.RECORD_AUDIO,
-            ),
-          )
+          if (!setupStatus.foregroundLocation || !setupStatus.microphone) {
+            corePermissions.launch(
+              arrayOf(
+                Manifest.permission.ACCESS_COARSE_LOCATION,
+                Manifest.permission.ACCESS_FINE_LOCATION,
+                Manifest.permission.RECORD_AUDIO,
+              ),
+            )
+          } else if (!setupStatus.locationServices) {
+            context.startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
+          } else {
+            model.refreshProtectionSetup()
+          }
         },
         onBackgroundLocation = {
           context.startActivity(
@@ -143,6 +179,7 @@ private fun GuardianHandoff(modifier: Modifier, onContinue: () -> Unit) {
 
 @Composable
 private fun ProtectionSetup(
+  status: ProtectionSetupStatus,
   onAccessibility: () -> Unit,
   onUsage: () -> Unit,
   onLocationAndMic: () -> Unit,
@@ -152,25 +189,49 @@ private fun ProtectionSetup(
   onAutomaticTime: () -> Unit,
   onContinue: () -> Unit,
 ) {
-  Text("Protection setup • 7 settings", style = MaterialTheme.typography.labelSmall)
+  Text("Protection setup • ${status.completedSettings} of 7 complete", style = MaterialTheme.typography.labelSmall)
   CereveilTitle("Set up protection on this phone", "Android asks for each setting separately. Cereveil explains why before opening it.")
-  PermissionCard("1", "Accessibility", "Helps apply the app controls your Guardian chooses.", onAccessibility)
-  PermissionCard("2", "App usage", "Shares the latest launchable app names and today's Android-calculated per-app usage with your Guardian.", onUsage)
-  PermissionCard("3", "Location and microphone", "Supports chosen safety features and audio checks.", onLocationAndMic)
-  PermissionCard("4", "Allow all-the-time location", "In Android’s app settings, choose Location, then Allow all the time.", onBackgroundLocation)
-  PermissionCard("5", "Notifications", "Keeps protection status and important alerts visible.", onNotifications)
-  PermissionCard("6", "Battery access", "Helps protection continue reliably in the background.", onBattery)
-  PermissionCard("7", "Automatic date and time", "Keep both automatic time and automatic time zone on so schedules and today's usage stay trustworthy.", onAutomaticTime)
+  PermissionCard("1", "Accessibility", "Helps apply the app controls your Guardian chooses.", status.accessibilityService, onAccessibility)
+  PermissionCard("2", "App usage", "Shares the latest launchable app names and today's Android-calculated per-app usage with your Guardian.", status.usageAccess, onUsage)
+  PermissionCard(
+    "3",
+    "Location and microphone",
+    if (!status.locationServices && status.foregroundLocation && status.microphone) {
+      "Permissions are granted, but Android Location Services is turned off."
+    } else {
+      "Supports chosen safety features and audio checks."
+    },
+    status.locationAndMicrophoneReady,
+    onLocationAndMic,
+  )
+  PermissionCard("4", "Allow all-the-time location", "In Android’s app settings, choose Location, then Allow all the time.", status.backgroundLocation, onBackgroundLocation)
+  PermissionCard("5", "Notifications", "Keeps protection status and important alerts visible.", status.notifications, onNotifications)
+  PermissionCard("6", "Battery access", "Helps protection continue reliably in the background.", status.batteryOptimizationExempt, onBattery)
+  PermissionCard("7", "Automatic date and time", "Keep both automatic time and automatic time zone on so schedules and today's usage stay trustworthy.", status.trustedDeviceTime, onAutomaticTime)
+  if (!status.complete) {
+    CereveilNotice("Still needed: ${status.missingSettings().joinToString()}.")
+  }
   CereveilNotice("Safe Browsing and VPN access are not part of this hackathon build.")
   CereveilPrimaryButton(text = "Check settings and continue", onClick = onContinue)
 }
 
 @Composable
-private fun PermissionCard(number: String, title: String, description: String, onClick: () -> Unit) {
+private fun PermissionCard(
+  number: String,
+  title: String,
+  description: String,
+  complete: Boolean,
+  onClick: () -> Unit,
+) {
   CereveilCard {
     Text("$number  $title", style = MaterialTheme.typography.titleLarge)
+    Text(
+      if (complete) "Complete" else "Needs setup",
+      color = if (complete) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.error,
+      style = MaterialTheme.typography.labelSmall,
+    )
     Text(description, color = MaterialTheme.colorScheme.onSurfaceVariant)
-    CereveilSecondaryButton(text = "Open setting", onClick = onClick)
+    if (!complete) CereveilSecondaryButton(text = "Open setting", onClick = onClick)
   }
 }
 

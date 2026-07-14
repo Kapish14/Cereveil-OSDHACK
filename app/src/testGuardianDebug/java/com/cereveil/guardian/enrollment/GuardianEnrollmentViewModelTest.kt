@@ -56,6 +56,20 @@ class GuardianEnrollmentViewModelTest {
       model.state.value,
     )
   }
+
+  @Test
+  fun replacementRevokesTheStaleDeviceBeforeStartingFreshEnrollment() = runTest(dispatcher) {
+    val client = FakeGuardianEnrollmentClient()
+    val model = GuardianDeviceReplacementViewModel("child-1", client)
+
+    assertEquals(GuardianDeviceReplacementUiState.Confirming, model.state.value)
+
+    model.replace()
+    advanceUntilIdle()
+
+    assertEquals(GuardianDeviceReplacementUiState.Replaced, model.state.value)
+    assertEquals(listOf("child-1"), client.replacementRequests)
+  }
 }
 
 private class FakeGuardianEnrollmentClient : GuardianEnrollmentClient {
@@ -77,8 +91,13 @@ private class FakeGuardianEnrollmentClient : GuardianEnrollmentClient {
       )
     )
   }
+  val replacementRequests = mutableListOf<String>()
 
   override suspend fun createCode(childProfileId: String) = GuardianEnrollmentResult.Success(code)
   override suspend fun cancelCode(enrollmentCodeId: String) = GuardianEnrollmentResult.Success(Unit)
+  override suspend fun replaceChildDevice(childProfileId: String): GuardianEnrollmentResult<Unit> {
+    replacementRequests += childProfileId
+    return GuardianEnrollmentResult.Success(Unit)
+  }
   override fun observeSummary(childProfileId: String): Flow<GuardianEnrollmentResult<GuardianEnrollmentSummary>> = summaries
 }

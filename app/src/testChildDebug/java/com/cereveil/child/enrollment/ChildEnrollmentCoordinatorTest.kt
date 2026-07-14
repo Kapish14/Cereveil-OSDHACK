@@ -7,6 +7,25 @@ import org.junit.Test
 
 class ChildEnrollmentCoordinatorTest {
   @Test
+  fun protectionSetupStatusIdentifiesDeviceLocationServicesAsTheOnlyMissingSetting() {
+    val status = ProtectionSetupStatus(
+      accessibilityService = true,
+      usageAccess = true,
+      foregroundLocation = true,
+      backgroundLocation = true,
+      locationServices = false,
+      microphone = true,
+      notifications = true,
+      batteryOptimizationExempt = true,
+      trustedDeviceTime = true,
+    )
+
+    assertEquals(6, status.completedSettings)
+    assertEquals(listOf("Location Services"), status.missingSettings())
+    assertTrue(!status.complete)
+  }
+
+  @Test
   fun hackathonProtectionSetupDoesNotRequireVpn() {
     val capabilities = ChildCapabilities(
       accessibilityService = true,

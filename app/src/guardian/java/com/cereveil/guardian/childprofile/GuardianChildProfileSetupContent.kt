@@ -23,6 +23,7 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 import com.cereveil.BuildConfig
 import com.cereveil.guardian.policy.GuardianPolicyContent
+import com.cereveil.guardian.enrollment.GuardianDeviceReplacementAction
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.cereveil.ui.CereveilCard
@@ -173,6 +174,23 @@ private fun ProfileList(
     RelativeHeartbeatTime(detailProfile)
     if (detailProfile.unavailableCapabilities.isNotEmpty()) {
       Text("Unavailable: ${detailProfile.unavailableCapabilities.joinToString()}")
+    }
+    if (detailProfile.enrollmentStatus == ChildProfileEnrollmentStatus.Active) {
+      GuardianDeviceReplacementAction(
+        childProfileId = detailProfile.childProfileId,
+        childDisplayName = detailProfile.displayName,
+        onReplacementReady = {
+          onSetUpChildDevice(
+            detailProfile.copy(
+              enrollmentStatus = ChildProfileEnrollmentStatus.Unenrolled,
+              connectivityStatus = GuardianConnectivityStatus.NotApplicable,
+              protectionStatus = GuardianProtectionStatus.NotApplicable,
+              unavailableCapabilities = emptyList(),
+              lastHeartbeatAt = null,
+            ),
+          )
+        },
+      )
     }
     if (BuildConfig.DEBUG) GuardianPolicyContent(detailProfile.childProfileId)
     GuardianLiveFeaturesContent(

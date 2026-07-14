@@ -27,6 +27,8 @@ class ChildEnrollmentViewModel(application: Application) : AndroidViewModel(appl
   )
 
   private var protectionSetupComplete = false
+  private val mutableProtectionSetupStatus = MutableStateFlow(protectionCapabilities.currentSetupStatus())
+  val protectionSetupStatus: StateFlow<ProtectionSetupStatus> = mutableProtectionSetupStatus.asStateFlow()
   private val mutableState = MutableStateFlow<ChildEnrollmentUiState>(ChildEnrollmentUiState.ProtectionSetup)
   val state: StateFlow<ChildEnrollmentUiState> = mutableState.asStateFlow()
 
@@ -46,7 +48,9 @@ class ChildEnrollmentViewModel(application: Application) : AndroidViewModel(appl
   }
 
   fun completeProtectionSetup() {
-    if (!protectionCapabilities.current().protectionSetupComplete) {
+    val status = protectionCapabilities.currentSetupStatus()
+    mutableProtectionSetupStatus.value = status
+    if (!status.complete) {
       mutableState.value = ChildEnrollmentUiState.ProtectionSetup
       return
     }
@@ -78,7 +82,9 @@ class ChildEnrollmentViewModel(application: Application) : AndroidViewModel(appl
   }
 
   fun refreshProtectionSetup() {
-    if (protectionCapabilities.current().protectionSetupComplete) completeProtectionSetup()
+    val status = protectionCapabilities.currentSetupStatus()
+    mutableProtectionSetupStatus.value = status
+    if (status.complete) completeProtectionSetup()
   }
 
   fun retryScan() {

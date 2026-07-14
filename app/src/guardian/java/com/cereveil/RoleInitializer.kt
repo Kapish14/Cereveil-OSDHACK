@@ -7,6 +7,8 @@ import com.clerk.api.Clerk
 import com.clerk.api.ClerkConfigurationOptions
 import com.clerk.api.network.serialization.ClerkResult
 import com.clerk.api.session.GetTokenOptions
+import com.clerk.api.session.Session
+import com.clerk.api.session.Session.SessionStatus
 import com.cereveil.guardian.auth.GuardianAuthSessionProvider
 import com.cereveil.guardian.auth.GuardianAuthState
 import com.cereveil.guardian.messaging.GuardianPushTokenRegistrar
@@ -24,6 +26,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import java.lang.ref.WeakReference
 
 object RoleInitializer {
   fun initialize(application: Application) {
@@ -36,7 +39,7 @@ object RoleInitializer {
       publishableKey = BuildConfig.CLERK_PUBLISHABLE_KEY,
       options =
         ClerkConfigurationOptions(
-          enableDebugMode = BuildConfig.DEBUG,
+          enableDebugMode = false,
           proxyUrl = null,
           telemetryEnabled = true,
         ),
@@ -69,17 +72,19 @@ object RoleInitializer {
     }
   }
 
-  fun createConvexClient(application: Application): ConvexClient =
-    ConvexClientWithAuth(
+  fun createConvexClient(application: Application): ConvexClient {
+    val provider = ClerkConvexAuthProvider()
+    return ConvexClientWithAuth(
       BuildConfig.CONVEX_URL,
-      ClerkConvexAuthProvider(),
+      provider,
       CoroutineScope(SupervisorJob() + Dispatchers.IO),
-    )
+    ).also { provider.bind(it, application) }
+  }
 
   fun guardianAuthSessionProvider(): GuardianAuthSessionProvider = ClerkGuardianAuthSessionProvider()
 
   suspend fun guardianConvexToken(): String? =
-    when (val result = Clerk.auth.getToken(GetTokenOptions(skipCache = true))) {
+    when (val result = Clerk.auth.getToken(GetTokenOptions(template = "convex", skipCache = true))) {
       is ClerkResult.Success -> result.value
       is ClerkResult.Failure -> null
     }
@@ -125,7 +130,29 @@ private class ClerkGuardianAuthSessionProvider : GuardianAuthSessionProvider {
 }
 
 private class ClerkConvexAuthProvider : AuthProvider<String> {
+  private var client: WeakReference<ConvexClientWithAuth<String>>? = null
+  private var applicationContext: Context? = null
   private var needsFreshToken = true
+
+  fun bind(client: ConvexClientWithAuth<String>, context: Context) {
+    this.client = WeakReference(client)
+    applicationContext = context.applicationContext
+    CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate).launch {
+      var previousSession: Session? = null
+      Clerk.sessionFlow.collect { session ->
+        val convexClient = this@ClerkConvexAuthProvider.client?.get() ?: return@collect
+        if (
+          session?.status == SessionStatus.ACTIVE &&
+            (previousSession?.status != SessionStatus.ACTIVE || previousSession?.id != session.id)
+        ) {
+          convexClient.loginFromCache()
+        } else if (previousSession?.id != null && session == null) {
+          applicationContext?.let { convexClient.logout(it) }
+        }
+        previousSession = session
+      }
+    }
+  }
 
   override suspend fun login(context: Context, onIdToken: (String?) -> Unit): Result<String> =
     fetchToken(onIdToken)
@@ -139,7 +166,9 @@ private class ClerkConvexAuthProvider : AuthProvider<String> {
 
   private suspend fun fetchToken(onIdToken: (String?) -> Unit): Result<String> =
     when (
-      val result = Clerk.auth.getToken(GetTokenOptions(skipCache = needsFreshToken))
+      val result = Clerk.auth.getToken(
+        GetTokenOptions(template = "convex", skipCache = needsFreshToken),
+      )
     ) {
       is ClerkResult.Success -> {
         val token = result.value

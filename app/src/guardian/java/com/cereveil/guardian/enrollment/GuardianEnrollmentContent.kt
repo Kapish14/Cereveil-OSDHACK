@@ -17,6 +17,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -119,6 +120,8 @@ private fun EnrollmentCode(
   onRegenerate: () -> Unit,
   onCancel: () -> Unit,
 ) {
+  val context = LocalContext.current
+  var debugLaunchMessage by remember(code.enrollmentCodeId) { mutableStateOf<String?>(null) }
   val remainingSeconds = enrollmentRemainingSeconds(code)
   CereveilTitle("Scan this code on ${displayName}’s phone", "Open the Cereveil Child app, finish protection setup, then tap Scan enrollment code.")
   CereveilCard {
@@ -142,6 +145,21 @@ private fun EnrollmentCode(
     )
   }
   CereveilNotice("Only use this code with the Child Device beside you. Never send a screenshot of it.")
+  if (com.cereveil.BuildConfig.DEBUG && remainingSeconds > 0) {
+    CereveilSecondaryButton(
+      text = "Open current Child app (debug)",
+      onClick = {
+        debugLaunchMessage = when (DebugChildEnrollmentLauncher(context).launch(code.qrPayload)) {
+          DebugChildEnrollmentLaunchResult.Launched -> null
+          DebugChildEnrollmentLaunchResult.ChildNotInstalled -> "The current Cereveil Child debug app is not installed."
+          DebugChildEnrollmentLaunchResult.SignatureMismatch -> "The installed Child app is not signed by this workspace."
+          DebugChildEnrollmentLaunchResult.Disabled -> "Debug enrollment is unavailable in this build."
+          DebugChildEnrollmentLaunchResult.Failed -> "Android could not open the current Child app."
+        }
+      },
+    )
+    debugLaunchMessage?.let { CereveilNotice(it) }
+  }
   CereveilPrimaryButton(text = if (remainingSeconds > 0) "Create a fresh code" else "Create new code", onClick = onRegenerate)
   CereveilSecondaryButton(text = "Cancel setup", onClick = onCancel)
 }

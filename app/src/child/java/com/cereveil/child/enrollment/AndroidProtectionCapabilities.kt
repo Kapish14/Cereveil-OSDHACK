@@ -10,8 +10,49 @@ import android.provider.Settings
 import android.location.LocationManager
 import androidx.core.content.ContextCompat
 
+data class ProtectionSetupStatus(
+  val accessibilityService: Boolean,
+  val usageAccess: Boolean,
+  val foregroundLocation: Boolean,
+  val backgroundLocation: Boolean,
+  val locationServices: Boolean,
+  val microphone: Boolean,
+  val notifications: Boolean,
+  val batteryOptimizationExempt: Boolean,
+  val trustedDeviceTime: Boolean,
+) {
+  val locationAndMicrophoneReady: Boolean
+    get() = foregroundLocation && locationServices && microphone
+
+  val completedSettings: Int
+    get() = listOf(
+      accessibilityService,
+      usageAccess,
+      locationAndMicrophoneReady,
+      backgroundLocation,
+      notifications,
+      batteryOptimizationExempt,
+      trustedDeviceTime,
+    ).count { it }
+
+  val complete: Boolean
+    get() = completedSettings == 7
+
+  fun missingSettings(): List<String> = buildList {
+    if (!accessibilityService) add("Accessibility")
+    if (!usageAccess) add("App usage")
+    if (!foregroundLocation) add("Location permission")
+    if (!locationServices) add("Location Services")
+    if (!microphone) add("Microphone permission")
+    if (!backgroundLocation) add("All-the-time location")
+    if (!notifications) add("Notifications")
+    if (!batteryOptimizationExempt) add("Battery access")
+    if (!trustedDeviceTime) add("Automatic date and time")
+  }
+}
+
 class AndroidProtectionCapabilities(private val context: Context) {
-  fun current(): ChildCapabilities {
+  fun currentSetupStatus(): ProtectionSetupStatus {
     val packageName = context.packageName
     val accessibilityServices =
       Settings.Secure.getString(context.contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES)
@@ -28,15 +69,29 @@ class AndroidProtectionCapabilities(private val context: Context) {
     val locationManager = context.getSystemService(LocationManager::class.java)
     val trustedDeviceTime = Settings.Global.getInt(context.contentResolver, Settings.Global.AUTO_TIME, 0) == 1 &&
       Settings.Global.getInt(context.contentResolver, Settings.Global.AUTO_TIME_ZONE, 0) == 1
-    return ChildCapabilities(
+    return ProtectionSetupStatus(
       accessibilityService = accessibilityServices.contains(packageName, ignoreCase = true),
       usageAccess = usageMode == AppOpsManager.MODE_ALLOWED,
-      location = foregroundLocation && backgroundLocation && locationManager.isLocationEnabled,
+      foregroundLocation = foregroundLocation,
+      backgroundLocation = backgroundLocation,
+      locationServices = locationManager.isLocationEnabled,
       microphone = granted(Manifest.permission.RECORD_AUDIO),
-      notificationAccess =
+      notifications =
         Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU || granted(Manifest.permission.POST_NOTIFICATIONS),
       batteryOptimizationExempt = powerManager.isIgnoringBatteryOptimizations(packageName),
       trustedDeviceTime = trustedDeviceTime,
+    )
+  }
+
+  fun current(): ChildCapabilities = currentSetupStatus().let { status ->
+    ChildCapabilities(
+      accessibilityService = status.accessibilityService,
+      usageAccess = status.usageAccess,
+      location = status.foregroundLocation && status.backgroundLocation && status.locationServices,
+      microphone = status.microphone,
+      notificationAccess = status.notifications,
+      batteryOptimizationExempt = status.batteryOptimizationExempt,
+      trustedDeviceTime = status.trustedDeviceTime,
     )
   }
 
