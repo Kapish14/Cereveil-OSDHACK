@@ -2,6 +2,9 @@ package com.cereveil
 
 import android.app.Application
 import android.content.Context
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
 import android.util.Log
 import com.clerk.api.Clerk
 import com.clerk.api.ClerkConfigurationOptions
@@ -11,6 +14,8 @@ import com.clerk.api.session.Session
 import com.clerk.api.session.Session.SessionStatus
 import com.cereveil.guardian.auth.GuardianAuthSessionProvider
 import com.cereveil.guardian.auth.GuardianAuthState
+import com.cereveil.guardian.auth.resolveGuardianAuthState
+import com.cereveil.guardian.auth.stableAuthStates
 import com.cereveil.guardian.messaging.GuardianPushTokenRegistrar
 import com.google.firebase.FirebaseApp
 import com.google.firebase.FirebaseOptions
@@ -21,8 +26,11 @@ import dev.convex.android.ConvexClientWithAuth
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -81,7 +89,8 @@ object RoleInitializer {
     ).also { provider.bind(it, application) }
   }
 
-  fun guardianAuthSessionProvider(): GuardianAuthSessionProvider = ClerkGuardianAuthSessionProvider()
+  fun guardianAuthSessionProvider(context: Context): GuardianAuthSessionProvider =
+    ClerkGuardianAuthSessionProvider(context)
 
   suspend fun guardianConvexToken(): String? =
     when (val result = Clerk.auth.getToken(GetTokenOptions(template = "convex", skipCache = true))) {
@@ -90,44 +99,68 @@ object RoleInitializer {
     }
 }
 
-private class ClerkGuardianAuthSessionProvider : GuardianAuthSessionProvider {
+private class ClerkGuardianAuthSessionProvider(context: Context) : GuardianAuthSessionProvider {
+  private val context = context.applicationContext
+
   override fun states(): Flow<GuardianAuthState> =
     Clerk.isInitialized
       .combine(Clerk.initializationError) { initialized, error -> initialized to error }
-      .combine(Clerk.userFlow) { readiness, user ->
+      .combine(
+        Clerk.userFlow.combine(Clerk.sessionFlow) { user, session -> user?.id ?: session?.id },
+      ) { readiness, authSessionKey -> readiness to authSessionKey }
+      .combine(context.validatedInternetFlow()) { (readiness, authSessionKey), internetAvailable ->
         val (initialized, error) = readiness
-        when {
-          !initialized && error == null -> null
-          user?.id != null -> GuardianAuthState.Authenticated(user.id)
-          Clerk.session?.id != null -> GuardianAuthState.Authenticated(Clerk.session!!.id)
-          else -> GuardianAuthState.Unauthenticated
-        }
+        resolveGuardianAuthState(
+          clerkInitialized = initialized,
+          clerkInitializationFailed = error != null,
+          authSessionKey = authSessionKey,
+          internetAvailable = internetAvailable,
+        )
       }
       .filterNotNull()
+      .stableAuthStates()
 
   override suspend fun currentState(): GuardianAuthState {
-    val clerkReady =
-      if (Clerk.isInitialized.value) {
-        true
-      } else {
-        Clerk.isInitialized
-          .combine(Clerk.initializationError) { initialized, error -> initialized to error }
-          .first { (initialized, error) -> initialized || error != null }
-          .first
-      }
+    val immediate = resolveGuardianAuthState(
+      clerkInitialized = Clerk.isInitialized.value,
+      clerkInitializationFailed = Clerk.initializationError.value != null,
+      authSessionKey = Clerk.user?.id ?: Clerk.session?.id,
+      internetAvailable = context.hasValidatedInternet(),
+    )
+    if (immediate != null) return immediate
 
-    if (!clerkReady) {
-      return GuardianAuthState.Unauthenticated
-    }
-
-    if (!Clerk.isSignedIn) {
-      return GuardianAuthState.Unauthenticated
-    }
-
-    val authSessionKey = Clerk.user?.id ?: Clerk.session?.id ?: return GuardianAuthState.Unauthenticated
-    return GuardianAuthState.Authenticated(authSessionKey)
+    val readiness = Clerk.isInitialized
+      .combine(Clerk.initializationError) { initialized, error -> initialized to error }
+      .first { (initialized, error) -> initialized || error != null }
+    return requireNotNull(resolveGuardianAuthState(
+      clerkInitialized = readiness.first,
+      clerkInitializationFailed = readiness.second != null,
+      authSessionKey = Clerk.user?.id ?: Clerk.session?.id,
+      internetAvailable = context.hasValidatedInternet(),
+    ))
   }
 }
+
+private fun Context.hasValidatedInternet(): Boolean {
+  val connectivity = getSystemService(ConnectivityManager::class.java)
+  val network = connectivity.activeNetwork ?: return false
+  val capabilities = connectivity.getNetworkCapabilities(network) ?: return false
+  return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+    capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+}
+
+private fun Context.validatedInternetFlow(): Flow<Boolean> = callbackFlow {
+  val connectivity = getSystemService(ConnectivityManager::class.java)
+  fun publish() { trySend(hasValidatedInternet()) }
+  val callback = object : ConnectivityManager.NetworkCallback() {
+    override fun onAvailable(network: Network) = publish()
+    override fun onLost(network: Network) = publish()
+    override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) = publish()
+  }
+  publish()
+  connectivity.registerDefaultNetworkCallback(callback)
+  awaitClose { connectivity.unregisterNetworkCallback(callback) }
+}.distinctUntilChanged()
 
 private class ClerkConvexAuthProvider : AuthProvider<String> {
   private var client: WeakReference<ConvexClientWithAuth<String>>? = null

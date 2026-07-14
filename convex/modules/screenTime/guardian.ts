@@ -11,7 +11,7 @@ const TERMINAL_RETENTION_MS = 15 * 60 * 1000;
 
 export const getOrRequestScreenTime = guardianMutation({
   operation: "screenTime.getOrRequest",
-  args: { childProfileId: v.id("childProfiles") },
+  args: { childProfileId: v.id("childProfiles"), force: v.optional(v.boolean()) },
   handler: async (ctx, actor, args) => {
     await requireGuardianForChildProfile(ctx, actor, args.childProfileId);
     const enrollment = await ctx.db.query("activeEnrollments")
@@ -43,7 +43,8 @@ export const getOrRequestScreenTime = guardianMutation({
       .withIndex("by_child_profile_id_and_status", (q) =>
         q.eq("childProfileId", args.childProfileId).eq("status", "pending"),
       ).unique();
-    const needsRefresh = current === null || current.validUntil <= serverNow || current.measuredAt + FRESH_FOR_MS <= serverNow;
+    const needsRefresh = args.force === true || current === null || current.validUntil <= serverNow ||
+      current.measuredAt + FRESH_FOR_MS <= serverNow;
     if (needsRefresh && (request === null || request.expiresAt <= serverNow)) {
       if (request !== null) {
         await ctx.db.patch("screenTimeRefreshRequests", request._id, {

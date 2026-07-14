@@ -1,6 +1,7 @@
 package com.cereveil.child.protection
 
 import android.accessibilityservice.AccessibilityService
+import android.accessibilityservice.AccessibilityServiceInfo
 import android.graphics.Color
 import android.net.VpnService
 import android.service.notification.NotificationListenerService
@@ -19,6 +20,7 @@ import com.cereveil.child.enrollment.AndroidChildDeviceKeyStore
 import com.cereveil.child.enrollment.ChildDeviceTokenProvider
 import com.cereveil.child.enrollment.ChildEnrollmentResult
 import com.cereveil.child.enrollment.ChildSupervisionPolicy
+import com.cereveil.child.enrollment.ChildSupervisionWork
 import com.cereveil.child.enrollment.HttpChildDeviceIdentityClient
 import com.cereveil.child.enrollment.SharedPreferencesChildEnrollmentStateStore
 import java.time.Instant
@@ -44,6 +46,23 @@ class CereveilAccessibilityService : AccessibilityService() {
 
   override fun onServiceConnected() {
     instance = this
+    serviceInfo = serviceInfo.apply {
+      flags = flags or AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or
+        AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS or
+        AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS
+    }
+    ChildSupervisionWork.enqueueNow(this)
+    val policy = getSharedPreferences("child_policy_runtime", MODE_PRIVATE)
+      .getString("policy", null)
+      ?.let { runCatching { ChildSupervisionPolicy.parse(it) }.getOrNull() }
+    if (policy != null) {
+      scope.launch(Dispatchers.Default) {
+        if (ChildSafetyModels.configure(this@CereveilAccessibilityService, policy.activeScreenSafety)) {
+          // OverlayManager owns a Choreographer and must be constructed on the main looper.
+          handler.post { safety.recheckVisibleWindows() }
+        }
+      }
+    }
   }
 
   override fun onAccessibilityEvent(event: AccessibilityEvent?) {
@@ -178,11 +197,14 @@ class CereveilAccessibilityService : AccessibilityService() {
   companion object {
     @Volatile private var instance: CereveilAccessibilityService? = null
 
+    fun isConnected(): Boolean = instance != null
+
     fun requestReevaluation(resetRequestPresentation: Boolean = false) {
       instance?.let { service ->
         service.handler.post {
           if (resetRequestPresentation) service.hideOverlay()
           service.evaluateVisibleApps(null)
+          service.safety.recheckVisibleWindows()
         }
       }
     }

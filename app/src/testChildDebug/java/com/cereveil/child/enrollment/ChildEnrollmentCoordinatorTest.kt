@@ -264,6 +264,25 @@ class ChildEnrollmentCoordinatorTest {
   }
 
   @Test
+  fun supervisionSyncDoesNotEraseEnrollmentOnAmbiguousUnauthorizedResponse() = runTest {
+    val harness = Harness().apply {
+      store.save(completionState().copy(accessJwtExpiresAt = Long.MAX_VALUE))
+      client.commandsUnauthorized = true
+      events.clear()
+    }
+    val sync = ChildSupervisionSyncCoordinator(
+      client = harness.client,
+      store = harness.store,
+      capabilities = { ChildCapabilities(true, true, true, true, true, true) },
+      refreshToken = { ChildEnrollmentResult.Failure(ChildEnrollmentError.Unauthorized) },
+      now = { 1L },
+    )
+
+    assertEquals(ChildSupervisionSyncOutcome.Retry, sync.sync())
+    assertEquals("enrollment-1", harness.store.load()?.activeEnrollmentId)
+  }
+
+  @Test
   fun supervisionSyncDelegatesTypedFeatureCommandsAndThenMaintainsLatestState() = runTest {
     val harness = Harness().apply {
       store.save(completionState().copy(accessJwtExpiresAt = Long.MAX_VALUE))
@@ -343,6 +362,7 @@ private class FakeStore(private val events: MutableList<String>) : ChildEnrollme
 
 private class FakeClient(private val events: MutableList<String>) : ChildDeviceIdentityClient {
   var heartbeatFails = false
+  var commandsUnauthorized = false
   var commands = emptyList<ChildDeviceCommand>()
   override suspend fun preview(code: String) = ChildEnrollmentResult.Success(ChildEnrollmentPreview("Aarav", 2, 1))
   override suspend fun complete(
@@ -365,7 +385,8 @@ private class FakeClient(private val events: MutableList<String>) : ChildDeviceI
     }
   override suspend fun registerPushToken(accessJwt: String, token: String) = ChildEnrollmentResult.Success(Unit)
   override suspend fun reconcileCommands(accessJwt: String) =
-    ChildEnrollmentResult.Success(commands).also { if (commands.isNotEmpty()) events += "client:commands" }
+    if (commandsUnauthorized) ChildEnrollmentResult.Failure(ChildEnrollmentError.Unauthorized)
+    else ChildEnrollmentResult.Success(commands).also { if (commands.isNotEmpty()) events += "client:commands" }
   override suspend fun rejectCommand(accessJwt: String, commandId: String, reason: String) =
     ChildEnrollmentResult.Success(Unit).also { events += "client:reject" }
   override suspend fun createTokenChallenge(credentialId: String) =

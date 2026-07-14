@@ -67,7 +67,10 @@ fun ChildEnrollmentContent(modifier: Modifier = Modifier, model: ChildEnrollment
   }
   DisposableEffect(lifecycleOwner) {
     val observer = LifecycleEventObserver { _, event ->
-      if (event == Lifecycle.Event.ON_RESUME) model.refreshProtectionSetup()
+      if (event == Lifecycle.Event.ON_RESUME) {
+        model.refreshPersistedEnrollment()
+        model.refreshProtectionSetup()
+      }
     }
     lifecycleOwner.lifecycle.addObserver(observer)
     onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }

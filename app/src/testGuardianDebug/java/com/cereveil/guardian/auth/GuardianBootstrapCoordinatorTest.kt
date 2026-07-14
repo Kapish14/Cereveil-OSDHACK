@@ -17,6 +17,15 @@ class GuardianBootstrapCoordinatorTest {
   }
 
   @Test
+  fun unavailableGuardianAuthRoutesToRetryableConnectionState() = runTest {
+    val harness = Harness(authState = GuardianAuthState.TemporarilyUnavailable)
+
+    assertEquals(GuardianStartupRoute.RetryableError, harness.coordinator.start())
+    assertTrue(harness.coordinator.canRetry)
+    assertTrue(harness.client.requests.isEmpty())
+  }
+
+  @Test
   fun firstAuthenticatedLaunchGeneratesInstallationIdBootstrapsAndRoutesToSetup() = runTest {
     val harness = Harness(
       authState = GuardianAuthState.Authenticated(authSessionKey = "clerk-user-1"),

@@ -22,6 +22,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.AndroidViewModel
@@ -33,6 +34,13 @@ import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.cereveil.CereveilApplication
 import com.cereveil.R
+import com.cereveil.guardian.arrayOrEmpty
+import com.cereveil.guardian.boolean
+import com.cereveil.guardian.double
+import com.cereveil.guardian.long
+import com.cereveil.guardian.objectOrNull
+import com.cereveil.guardian.string
+import com.cereveil.guardian.stringOrNull
 import com.cereveil.guardian.auth.AndroidGuardianOperationBootstrapper
 import com.cereveil.guardian.auth.SharedPreferencesGuardianInstallationIdProvider
 import com.cereveil.guardian.remoteaudio.GuardianRemoteAudioCard
@@ -51,6 +59,10 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Job
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 
 data class GuardianCatalogApp(
   val packageName: String,
@@ -92,6 +104,7 @@ data class GuardianLiveFeaturesState(
   val screenTime: List<GuardianScreenTimeApp> = emptyList(),
   val screenMeasuredAt: Long? = null,
   val screenLoading: Boolean = true,
+  val screenRefreshPending: Boolean = false,
   val screenError: Boolean = false,
   val safetyAlerts: List<GuardianSafetyAlert> = emptyList(),
   val message: String? = null,
@@ -143,20 +156,20 @@ class GuardianLiveFeaturesViewModel(
     screenRefreshJob = viewModelScope.launch {
       while (true) {
         loadScreenTime(args)
-        delay(30_000)
+        delay(if (mutable.value.screenRefreshPending) 2_000 else 30_000)
       }
     }
   }
 
   private fun subscribeCatalog(args: Map<String, Any?>) = viewModelScope.launch {
-    convex.subscribe<Map<String, Any?>>("modules/appCatalog/guardian:getLatestAppCatalog", args).collect { result ->
+    convex.subscribe<JsonElement>("modules/appCatalog/guardian:getLatestAppCatalog", args).collect { result ->
       result.onFailure { mutable.value = mutable.value.copy(message = "Couldn’t load the Child Device app list") }
       result.onSuccess { value ->
-        @Suppress("UNCHECKED_CAST") val rows = value["apps"] as? List<Map<String, Any?>> ?: emptyList()
-        val catalogApps = rows.map {
-          val packageName = it["packageName"].toString()
+        val root = value.jsonObject
+        val catalogApps = root.arrayOrEmpty("apps").map { it.jsonObject }.map {
+          val packageName = it.string("packageName")
           GuardianCatalogApp(
-            packageName, it["label"].toString(), packageName in manualBlocked,
+            packageName, it.string("label"), packageName in manualBlocked,
             blockRules[packageName]?.schedules.orEmpty(), blockRules[packageName] != appliedBlockRules[packageName],
           )
         }
@@ -164,24 +177,23 @@ class GuardianLiveFeaturesViewModel(
           .map { GuardianCatalogApp(it.packageName, "Not currently installed", it.manualBlocked, it.schedules, it != appliedBlockRules[it.packageName]) }
         mutable.value = mutable.value.copy(
           apps = catalogApps + missing,
-          catalogSyncedAt = (value["syncedAt"] as? Number)?.toLong(),
+          catalogSyncedAt = root.stringOrNull("syncedAt")?.toDoubleOrNull()?.toLong(),
+          message = null,
         )
       }
     }
   }
 
   private fun subscribePolicy(args: Map<String, Any?>) = viewModelScope.launch {
-    convex.subscribe<Map<String, Any?>>("modules/policies/guardian:getPolicyState", args).collect { result ->
+    convex.subscribe<JsonElement>("modules/policies/guardian:getPolicyState", args).collect { result ->
       result.onSuccess { value ->
-        @Suppress("UNCHECKED_CAST") val desired = value["desiredPolicy"] as Map<String, Any?>
-        policyVersion = (desired["version"] as Number).toInt()
-        @Suppress("UNCHECKED_CAST") val block = desired["appBlocking"] as Map<String, Any?>
-        @Suppress("UNCHECKED_CAST") val rules = block["rules"] as? List<Map<String, Any?>> ?: emptyList()
-        blockRules = parseRules(rules)
-        @Suppress("UNCHECKED_CAST") val applied = value["appliedPolicy"] as? Map<String, Any?>
-        @Suppress("UNCHECKED_CAST") val appliedBlock = applied?.get("appBlocking") as? Map<String, Any?>
-        @Suppress("UNCHECKED_CAST") val appliedRulesRaw = appliedBlock?.get("rules") as? List<Map<String, Any?>> ?: emptyList()
-        appliedBlockRules = parseRules(appliedRulesRaw)
+        val root = value.jsonObject
+        val desired = requireNotNull(root.objectOrNull("desiredPolicy"))
+        policyVersion = desired.long("version").toInt()
+        val block = requireNotNull(desired.objectOrNull("appBlocking"))
+        blockRules = parseRules(block.arrayOrEmpty("rules").map { it.jsonObject })
+        val appliedBlock = root.objectOrNull("appliedPolicy")?.objectOrNull("appBlocking")
+        appliedBlockRules = parseRules(appliedBlock?.arrayOrEmpty("rules")?.map { it.jsonObject }.orEmpty())
         manualBlocked = blockRules.values.filter { it.manualBlocked }.map { it.packageName }.toSet()
         val updated = mutable.value.apps.map { it.copy(
           blocked = it.packageName in manualBlocked,
@@ -199,76 +211,99 @@ class GuardianLiveFeaturesViewModel(
     }
   }
 
-  private fun parseRules(rules: List<Map<String, Any?>>): Map<String, GuardianBlockRule> =
+  private fun parseRules(rules: List<JsonObject>): Map<String, GuardianBlockRule> =
     rules.associate { raw ->
-          val packageName = raw["packageName"].toString()
-          @Suppress("UNCHECKED_CAST") val schedulesRaw = raw["schedules"] as? List<Map<String, Any?>> ?: emptyList()
-          val schedules = schedulesRaw.map { schedule -> GuardianBlockSchedule(
-            schedule["scheduleId"].toString(),
-            ((schedule["weekdays"] as? List<*>)?.mapNotNull { (it as? Number)?.toInt() }).orEmpty(),
-            (schedule["startMinute"] as Number).toInt(),
-            (schedule["endMinute"] as Number).toInt(),
+          val packageName = raw.string("packageName")
+          val schedules = raw.arrayOrEmpty("schedules").map { it.jsonObject }.map { schedule -> GuardianBlockSchedule(
+            schedule.string("scheduleId"),
+            schedule.arrayOrEmpty("weekdays").mapNotNull { it.jsonPrimitive.content.toDoubleOrNull()?.toInt() },
+            schedule.long("startMinute").toInt(),
+            schedule.long("endMinute").toInt(),
           ) }
-          packageName to GuardianBlockRule(packageName, raw["manualBlocked"] == true, schedules)
+          packageName to GuardianBlockRule(packageName, raw.boolean("manualBlocked"), schedules)
         }
 
   private fun subscribeAccess(args: Map<String, Any?>) = viewModelScope.launch {
-    convex.subscribe<List<Map<String, Any?>>>("modules/access/guardian:listPendingAccessRequests", args).collect { result ->
-      result.onSuccess { rows -> mutable.value = mutable.value.copy(accessRequests = rows.map {
+    convex.subscribe<JsonElement>("modules/access/guardian:listPendingAccessRequests", args).collect { result ->
+      result.onSuccess { value -> mutable.value = mutable.value.copy(accessRequests = value.arrayOrEmpty().map { it.jsonObject }.map {
         GuardianAccessRequest(
-          it["requestId"].toString(), it["packageName"].toString(), it["blockKind"].toString(),
-          (it["scheduledCoverageEnd"] as? Number)?.toLong(),
+          it.string("requestId"), it.string("packageName"), it.string("blockKind"),
+          it.stringOrNull("scheduledCoverageEnd")?.toDoubleOrNull()?.toLong(),
         )
       }) }
     }
   }
 
   private fun subscribeLocation(args: Map<String, Any?>) = viewModelScope.launch {
-    convex.subscribe<Map<String, Any?>>("modules/location/guardian:getLatestLocation", args).collect { result ->
+    convex.subscribe<JsonElement>("modules/location/guardian:getLatestLocation", args).collect { result ->
       result.onSuccess { value ->
-        @Suppress("UNCHECKED_CAST") val location = value["location"] as? Map<String, Any?>
-        @Suppress("UNCHECKED_CAST") val refresh = value["refresh"] as? Map<String, Any?>
+        val root = value.jsonObject
+        val location = root.objectOrNull("location")
+        val refresh = root.objectOrNull("refresh")
         mutable.value = mutable.value.copy(
           location = location?.let { GuardianLocation(
-            (it["latitude"] as Number).toDouble(), (it["longitude"] as Number).toDouble(),
-            (it["accuracyMeters"] as Number).toDouble(), (it["capturedAt"] as Number).toLong(),
+            it.double("latitude"), it.double("longitude"),
+            it.double("accuracyMeters"), it.long("capturedAt"),
           ) },
-          locationRefreshPending = refresh?.get("status")?.toString() == "pending",
-          locationRefreshStatus = refresh?.get("status")?.toString(),
+          locationRefreshPending = refresh?.string("status") == "pending",
+          locationRefreshStatus = refresh?.string("status"),
         )
       }
     }
   }
 
   private fun subscribeSafetyAlerts(args: Map<String, Any?>) = viewModelScope.launch {
-    convex.subscribe<List<Map<String, Any?>>>("modules/safetyAlerts/guardian:listSafetyAlerts", args).collect { result ->
-      result.onSuccess { rows -> mutable.value = mutable.value.copy(safetyAlerts = rows.map { row ->
+    convex.subscribe<JsonElement>("modules/safetyAlerts/guardian:listSafetyAlerts", args).collect { result ->
+      result.onSuccess { value -> mutable.value = mutable.value.copy(safetyAlerts = value.arrayOrEmpty().map { it.jsonObject }.map { row ->
         GuardianSafetyAlert(
-          incidentId = row["incidentId"].toString(),
-          type = row["type"].toString(),
-          appLabel = row["appLabel"].toString(),
-          confidenceBand = row["confidenceBand"].toString(),
-          occurredAt = (row["occurredAt"] as Number).toLong(),
+          incidentId = row.string("incidentId"),
+          type = row.string("type"),
+          appLabel = row.string("appLabel"),
+          confidenceBand = row.string("confidenceBand"),
+          occurredAt = row.long("occurredAt"),
         )
       }) }
     }
   }
 
-  private suspend fun loadScreenTime(args: Map<String, Any?>) {
-    runCatching { convex.mutation<Map<String, Any?>>("modules/screenTime/guardian:getOrRequestScreenTime", args) }
+  private suspend fun loadScreenTime(args: Map<String, Any?>, force: Boolean = false) {
+    val requestArgs = if (force) args + ("force" to true) else args
+    runCatching { convex.mutation<JsonElement>("modules/screenTime/guardian:getOrRequestScreenTime", requestArgs) }
       .onSuccess { value ->
-        @Suppress("UNCHECKED_CAST") val snapshot = value["snapshot"] as? Map<String, Any?>
-        @Suppress("UNCHECKED_CAST") val rows = snapshot?.get("apps") as? List<Map<String, Any?>> ?: emptyList()
+        val root = value.jsonObject
+        val snapshot = root.objectOrNull("snapshot")
+        val rows = snapshot?.arrayOrEmpty("apps")?.map { it.jsonObject }.orEmpty()
         mutable.value = mutable.value.copy(
           screenTime = rows.map { GuardianScreenTimeApp(
-            it["packageName"].toString(), it["label"].toString(), (it["totalTimeInForegroundMs"] as Number).toLong(),
+            it.string("packageName"), it.string("label"), it.long("totalTimeInForegroundMs"),
           ) },
-          screenMeasuredAt = (snapshot?.get("measuredAt") as? Number)?.toLong(),
+          screenMeasuredAt = snapshot?.long("measuredAt"),
           screenLoading = false,
+          screenRefreshPending = root.objectOrNull("refresh") != null,
           screenError = false,
         )
       }
-      .onFailure { mutable.value = mutable.value.copy(screenLoading = false, screenError = true) }
+      .onFailure { mutable.value = mutable.value.copy(
+        screenLoading = false,
+        screenRefreshPending = false,
+        screenError = true,
+      ) }
+  }
+
+  fun refreshScreenTime() {
+    val id = installationId ?: return
+    if (mutable.value.screenRefreshPending) return
+    mutable.value = mutable.value.copy(screenRefreshPending = true, screenError = false)
+    viewModelScope.launch {
+      loadScreenTime(
+        mapOf("guardianInstallationId" to id, "childProfileId" to childProfileId),
+        force = true,
+      )
+    }
+  }
+
+  fun clearSafetyAlerts() = mutate {
+    convex.mutation<JsonElement>("modules/safetyAlerts/guardian:clearSafetyAlerts", commonArgs())
   }
 
   fun setManualBlock(packageName: String, blocked: Boolean) = mutate {
@@ -302,32 +337,34 @@ class GuardianLiveFeaturesViewModel(
       "manualBlocked" to it.manualBlocked,
       "schedules" to it.schedules.map { schedule -> mapOf(
         "scheduleId" to schedule.scheduleId,
-        "weekdays" to schedule.weekdays.map(Int::toLong),
-        "startMinute" to schedule.startMinute.toLong(),
-        "endMinute" to schedule.endMinute.toLong(),
+        "weekdays" to schedule.weekdays.map(Int::toDouble),
+        "startMinute" to schedule.startMinute.toDouble(),
+        "endMinute" to schedule.endMinute.toDouble(),
       ) },
     ) }
-    convex.mutation<Map<String, Any?>>("modules/policies/guardian:updateAppBlockingRules", commonArgs() + mapOf(
-      "expectedCurrentVersion" to policyVersion.toLong(), "operationId" to UUID.randomUUID().toString(), "rules" to rules,
+    convex.mutation<JsonElement>("modules/policies/guardian:updateAppBlockingRules", commonArgs() + mapOf(
+      "expectedCurrentVersion" to policyVersion.toDouble(), "operationId" to UUID.randomUUID().toString(), "rules" to rules,
     ))
   }
 
   fun requestLocation() = mutate {
-    convex.mutation<Map<String, Any?>>("modules/location/guardian:requestLocationRefresh", commonArgs())
+    convex.mutation<JsonElement>("modules/location/guardian:requestLocationRefresh", commonArgs())
   }
 
   fun resolveAccess(requestId: String, approve: Boolean, minutes: Int = 15, untilBlockEnds: Boolean = false) = mutate {
-    convex.mutation<Map<String, Any?>>("modules/access/guardian:resolveAccessRequest", mapOf(
+    convex.mutation<JsonElement>("modules/access/guardian:resolveAccessRequest", mapOf(
       "guardianInstallationId" to installationId, "requestId" to requestId,
       "decision" to if (approve) "approve" else "deny",
-      "durationMinutes" to if (approve) minutes.toLong() else null,
+      "durationMinutes" to if (approve) minutes.toDouble() else null,
       "untilBlockEnds" to if (approve && untilBlockEnds) true else null,
     ).filterValues { it != null })
   }
 
   private fun commonArgs() = mapOf("guardianInstallationId" to installationId, "childProfileId" to childProfileId)
   private fun mutate(block: suspend () -> Unit) = viewModelScope.launch {
-    runCatching { block() }.onFailure { mutable.value = mutable.value.copy(message = "Couldn’t complete that request") }
+    runCatching { block() }
+      .onSuccess { mutable.value = mutable.value.copy(message = null) }
+      .onFailure { mutable.value = mutable.value.copy(message = "Couldn’t complete that request") }
   }
 
   private fun parseMinute(value: String): Int? {
@@ -351,10 +388,12 @@ fun GuardianLiveFeaturesContent(childProfileId: String, safetyAlertsFirst: Boole
     onStopOrDispose { model.setVisible(false) }
   }
   val state by model.state.collectAsStateWithLifecycle()
+  var showingApps by rememberSaveable(childProfileId) { mutableStateOf(false) }
+  var appSearch by rememberSaveable(childProfileId) { mutableStateOf("") }
   if (state.loading) { CircularProgressIndicator(); return }
   state.message?.let { Text(it, color = MaterialTheme.colorScheme.error) }
 
-  if (safetyAlertsFirst) SafetyAlertFeed(state.safetyAlerts)
+  if (safetyAlertsFirst) SafetyAlertFeed(state.safetyAlerts, model::clearSafetyAlerts)
 
   GuardianRemoteAudioCard(childProfileId)
 
@@ -363,7 +402,24 @@ fun GuardianLiveFeaturesContent(childProfileId: String, safetyAlertsFirst: Boole
     Text("App list updated ${(System.currentTimeMillis() - it).coerceAtLeast(0) / 60_000} min ago")
   }
   if (state.apps.isEmpty()) Text("Waiting for the Child Device app list.")
-  state.apps.forEach { item -> CereveilCard {
+  else {
+    val configuredCount = state.apps.count { it.blocked || it.schedules.isNotEmpty() }
+    Text("${state.apps.size} apps available • $configuredCount with blocking rules", style = MaterialTheme.typography.labelSmall)
+    CereveilSecondaryButton(
+      text = if (showingApps) "Done managing apps" else "Manage blocked apps",
+      onClick = { showingApps = !showingApps },
+    )
+  }
+  if (showingApps) OutlinedTextField(
+    value = appSearch,
+    onValueChange = { appSearch = it },
+    label = { Text("Search apps") },
+    modifier = Modifier.fillMaxWidth(),
+    singleLine = true,
+  )
+  state.apps.filter {
+    showingApps && (appSearch.isBlank() || it.label.contains(appSearch, true) || it.packageName.contains(appSearch, true))
+  }.forEach { item -> CereveilCard {
     var editingSchedule by rememberSaveable(item.packageName) { mutableStateOf(false) }
     var weekdays by rememberSaveable(item.packageName) { mutableStateOf("1,2,3,4,5,6,7") }
     var startTime by rememberSaveable(item.packageName) { mutableStateOf("22:00") }
@@ -428,7 +484,9 @@ fun GuardianLiveFeaturesContent(childProfileId: String, safetyAlertsFirst: Boole
 
   Text("Latest location", style = MaterialTheme.typography.titleLarge)
   state.location?.let { location ->
-    if (LocalContext.current.getString(R.string.google_maps_key).isNotBlank()) GuardianLocationMap(location)
+    val hasEmbeddedMap = stringResource(R.string.google_maps_key).isNotBlank()
+    if (hasEmbeddedMap) GuardianLocationMap(location)
+    else Text("Embedded map preview is not configured in this build. Open the current location in your maps app below.")
     val ageMinutes = ((System.currentTimeMillis() - location.capturedAt).coerceAtLeast(0) / 60_000)
     Text("${"%.5f".format(location.latitude)}, ${"%.5f".format(location.longitude)}")
     Text("Updated $ageMinutes min ago • ±${location.accuracyMeters.toInt()} m")
@@ -449,18 +507,28 @@ fun GuardianLiveFeaturesContent(childProfileId: String, safetyAlertsFirst: Boole
   if (state.screenError) Text("Couldn’t refresh Screen Time.", color = MaterialTheme.colorScheme.error)
   else if (state.screenLoading) Text("Fetching current Android usage…")
   else if (state.screenTime.isEmpty()) Text("No app usage reported for today yet.")
+  else Text(
+    "Total today: ${formatDuration(state.screenTime.sumOf(GuardianScreenTimeApp::totalMs))}",
+    style = MaterialTheme.typography.titleMedium,
+  )
   state.screenTime.forEach { row -> CereveilCard {
     Text(row.label)
     Text(formatDuration(row.totalMs))
   } }
+  CereveilSecondaryButton(
+    text = if (state.screenRefreshPending) "Refreshing screen time…" else "Refresh screen time now",
+    onClick = model::refreshScreenTime,
+    enabled = !state.screenRefreshPending,
+  )
 
-  if (!safetyAlertsFirst) SafetyAlertFeed(state.safetyAlerts)
+  if (!safetyAlertsFirst) SafetyAlertFeed(state.safetyAlerts, model::clearSafetyAlerts)
 }
 
 @Composable
-private fun SafetyAlertFeed(alerts: List<GuardianSafetyAlert>) {
+private fun SafetyAlertFeed(alerts: List<GuardianSafetyAlert>, onClear: () -> Unit) {
   Text("Safety alerts", style = MaterialTheme.typography.titleLarge)
   if (alerts.isEmpty()) Text("No safety alerts from the last week.")
+  else CereveilSecondaryButton(text = "Clear alerts", onClick = onClear)
   alerts.forEach { alert -> CereveilCard {
     Text(if (alert.type == "scam_text") "Possible scam message" else "NSFW screen content")
     Text(alert.appLabel)

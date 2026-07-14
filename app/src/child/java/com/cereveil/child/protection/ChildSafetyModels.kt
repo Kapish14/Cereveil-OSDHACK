@@ -3,6 +3,7 @@ package com.cereveil.child.protection
 import android.content.Context
 import android.graphics.Bitmap
 import android.os.Build
+import android.util.Log
 import com.cereveil.child.enrollment.ActiveScreenSafetyPolicy
 import com.cereveil.child.enrollment.SafetySensitivity
 import com.cereveil.child.ml.ModelSensitivity
@@ -40,12 +41,15 @@ object ChildSafetyModels {
       }
       if (createdScam != null) scamClassifier = createdScam
       if (createdNsfw != null) nsfwClassifier = createdNsfw
-      if (!policy.scamText.enabled) { scamClassifier?.close(); scamClassifier = null }
-      if (!policy.nsfwScreen.enabled) { nsfwClassifier?.close(); nsfwClassifier = null }
+      // Keep initialized sessions warm across policy toggles. Re-parsing the fraud tokenizer and
+      // rebuilding ONNX sessions made every off -> on cycle take several seconds. Detection is
+      // still governed by the committed policy; sessions are released when supervision stops.
+      Log.i(TAG, "Safety models configured: scam=${scamClassifier != null}, nsfw=${nsfwClassifier != null}")
       true
-    } catch (_: Exception) {
+    } catch (error: Exception) {
       createdScam?.close()
       createdNsfw?.close()
+      Log.e(TAG, "Safety model initialization failed", error)
       false
     }
   }
@@ -69,4 +73,6 @@ object ChildSafetyModels {
     SafetySensitivity.Standard -> ModelSensitivity.Standard
     SafetySensitivity.Higher -> ModelSensitivity.Higher
   }
+
+  private const val TAG = "CereveilSafetyModels"
 }

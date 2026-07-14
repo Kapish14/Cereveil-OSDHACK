@@ -9,6 +9,7 @@ import android.os.PowerManager
 import android.provider.Settings
 import android.location.LocationManager
 import androidx.core.content.ContextCompat
+import com.cereveil.child.protection.CereveilAccessibilityService
 
 data class ProtectionSetupStatus(
   val accessibilityService: Boolean,
@@ -70,7 +71,8 @@ class AndroidProtectionCapabilities(private val context: Context) {
     val trustedDeviceTime = Settings.Global.getInt(context.contentResolver, Settings.Global.AUTO_TIME, 0) == 1 &&
       Settings.Global.getInt(context.contentResolver, Settings.Global.AUTO_TIME_ZONE, 0) == 1
     return ProtectionSetupStatus(
-      accessibilityService = accessibilityServices.contains(packageName, ignoreCase = true),
+      accessibilityService = accessibilityServices.contains(packageName, ignoreCase = true) &&
+        CereveilAccessibilityService.isConnected(),
       usageAccess = usageMode == AppOpsManager.MODE_ALLOWED,
       foregroundLocation = foregroundLocation,
       backgroundLocation = backgroundLocation,

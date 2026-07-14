@@ -1,5 +1,6 @@
 package com.cereveil.guardian.messaging
 
+import android.Manifest
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -9,6 +10,7 @@ import android.app.PendingIntent
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import androidx.core.content.ContextCompat
 import com.cereveil.BuildConfig
 import com.cereveil.MainActivity
 import com.cereveil.RoleInitializer
@@ -176,7 +178,9 @@ class GuardianNoticeReconciler(private val context: Context) {
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
       ))
       .build()
-    NotificationManagerCompat.from(context).notify(receiptId.hashCode(), notification)
+    if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) {
+      NotificationManagerCompat.from(context).notify(receiptId.hashCode(), notification)
+    }
   }
 
   private suspend fun convexCall(kind: String, path: String, token: String, args: JsonObject): JsonObject? =

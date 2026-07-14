@@ -14,7 +14,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
 class GuardianStartupViewModel(application: Application) : AndroidViewModel(application) {
-  private val authSessionProvider = RoleInitializer.guardianAuthSessionProvider()
+  private val authSessionProvider = RoleInitializer.guardianAuthSessionProvider(application)
 
   private val coordinator =
     GuardianBootstrapCoordinator(
@@ -55,7 +55,7 @@ class GuardianStartupViewModel(application: Application) : AndroidViewModel(appl
   }
 
   private suspend fun runStart() {
-    mutableRoute.value = GuardianStartupRoute.Loading
+    mutableRoute.value = routeWhileRefreshing(mutableRoute.value)
     val route = coordinator.start()
     if (route == GuardianStartupRoute.Setup || route == GuardianStartupRoute.Dashboard) {
       GuardianPushTokenRegistrar(getApplication()).registerPending()

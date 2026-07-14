@@ -1,5 +1,10 @@
 package com.cereveil.guardian.childprofile
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -18,6 +23,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
@@ -44,6 +50,13 @@ fun GuardianChildProfileSetupContent(
   initialDetailProfileId: String? = null,
   initialOpenSafetyFeed: Boolean = false,
 ) {
+  val context = LocalContext.current
+  val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
+  LaunchedEffect(Unit) {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+      context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+    ) notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+  }
   LaunchedEffect(authSessionKey, refreshKey) { viewModel.loadForSession(authSessionKey) }
   val state by viewModel.state.collectAsStateWithLifecycle()
   GuardianChildProfileSetupContent(

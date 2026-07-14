@@ -1116,6 +1116,13 @@ describe("Active Screen Safety policy schema v3", () => {
     }));
     expect(after.alerts).toHaveLength(5);
     expect(after.notices).toHaveLength(3);
+
+    const clearSafetyAlerts = makeFunctionReference<"mutation", any, any>(
+      "modules/safetyAlerts/guardian:clearSafetyAlerts",
+    ) as FunctionReference<"mutation", "public", any, any>;
+    expect(await enrolled.t.withIdentity(identity).mutation(clearSafetyAlerts, guardianArgs))
+      .toEqual({ cleared: 5 });
+    expect(await enrolled.t.withIdentity(identity).query(listSafetyAlerts, guardianArgs)).toEqual([]);
   });
 });
 

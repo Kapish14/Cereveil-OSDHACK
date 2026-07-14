@@ -30,6 +30,7 @@ import com.cereveil.CereveilApplication
 import com.cereveil.guardian.auth.AndroidGuardianOperationBootstrapper
 import com.cereveil.guardian.auth.SharedPreferencesGuardianInstallationIdProvider
 import com.cereveil.ui.CereveilCard
+import com.cereveil.ui.CereveilSecondaryButton
 
 @Composable
 fun GuardianPolicyContent(childProfileId: String) {
@@ -51,14 +52,8 @@ fun GuardianPolicyContent(childProfileId: String) {
       color = MaterialTheme.colorScheme.error,
     )
     is GuardianPolicyUiState.Ready -> {
-      Text("Development supervision settings", style = MaterialTheme.typography.titleLarge)
+      Text("Supervision settings", style = MaterialTheme.typography.titleLarge)
       PolicyToggle(PolicyControl.AppBlocking, current, model::update)
-      PolicyToggle(PolicyControl.SafeBrowsing, current, onChange = { feature, enabled, _ ->
-        model.update(feature, enabled, if (enabled) current.policy.desired.safeSearchEnabled else false)
-      })
-      PolicyToggle(PolicyControl.SafeSearch, current, onChange = { _, enabled, _ ->
-        model.update(PolicyFeature.SafeBrowsing, current.policy.desired.safeBrowsingEnabled, enabled)
-      }, enabledByParent = current.policy.desired.safeBrowsingEnabled)
       Text("Active Screen Safety", style = MaterialTheme.typography.titleLarge)
       SafetyDetectorCard(
         title = "Scam Text Detection",
@@ -104,6 +99,7 @@ private fun SafetyDetectorCard(
   onChange: (GuardianSafetyDetector, GuardianSafetyDetectorPolicy) -> Unit,
 ) {
   var search by remember(detector) { mutableStateOf("") }
+  var choosingApps by remember(detector) { mutableStateOf(false) }
   val pending = saving || applied != desired
   val visibleApps = apps.filter {
     search.isBlank() || it.label.contains(search, true) || it.packageName.contains(search, true)
@@ -133,34 +129,45 @@ private fun SafetyDetectorCard(
         )
       }
     }
-    OutlinedTextField(
-      value = search,
-      onValueChange = { search = it },
-      label = { Text("Search monitored apps") },
-      modifier = Modifier.fillMaxWidth(),
-      singleLine = true,
+    Text(
+      if (desired.monitoredPackageNames.isEmpty()) "Choose at least one app before enabling."
+      else "Monitoring ${desired.monitoredPackageNames.size} app${if (desired.monitoredPackageNames.size == 1) "" else "s"}.",
+      style = MaterialTheme.typography.labelSmall,
     )
-    visibleApps.forEach { app ->
-      val selected = app.packageName in desired.monitoredPackageNames
-      Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Checkbox(
-          checked = selected,
-          onCheckedChange = { checked ->
-            if (!checked && desired.enabled && desired.monitoredPackageNames.size == 1) return@Checkbox
-            val packages = if (checked) desired.monitoredPackageNames + app.packageName
-            else desired.monitoredPackageNames - app.packageName
-            onChange(detector, desired.copy(monitoredPackageNames = packages))
-          },
-          enabled = available && !pending,
-        )
-        Column {
-          Text(app.label)
-          Text(app.packageName, style = MaterialTheme.typography.labelSmall)
+    CereveilSecondaryButton(
+      text = if (choosingApps) "Done choosing apps" else "Choose monitored apps",
+      onClick = { choosingApps = !choosingApps },
+    )
+    if (choosingApps) {
+      OutlinedTextField(
+        value = search,
+        onValueChange = { search = it },
+        label = { Text("Search monitored apps") },
+        modifier = Modifier.fillMaxWidth(),
+        singleLine = true,
+      )
+      visibleApps.forEach { app ->
+        val selected = app.packageName in desired.monitoredPackageNames
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+          Checkbox(
+            checked = selected,
+            onCheckedChange = { checked ->
+              if (!checked && desired.enabled && desired.monitoredPackageNames.size == 1) return@Checkbox
+              val packages = if (checked) desired.monitoredPackageNames + app.packageName
+              else desired.monitoredPackageNames - app.packageName
+              onChange(detector, desired.copy(monitoredPackageNames = packages))
+            },
+            enabled = available && !pending,
+          )
+          Column {
+            Text(app.label)
+            Text(app.packageName, style = MaterialTheme.typography.labelSmall)
+          }
         }
       }
-    }
-    desired.monitoredPackageNames.filter { selected -> apps.none { it.packageName == selected } }.forEach { packageName ->
-      Text("$packageName • not currently installed", style = MaterialTheme.typography.labelSmall)
+      desired.monitoredPackageNames.filter { selected -> apps.none { it.packageName == selected } }.forEach { packageName ->
+        Text("$packageName • not currently installed", style = MaterialTheme.typography.labelSmall)
+      }
     }
     if (pending) Text("Waiting for Child Device")
   }
@@ -171,7 +178,6 @@ private fun PolicyToggle(
   control: PolicyControl,
   state: GuardianPolicyUiState.Ready,
   onChange: (PolicyFeature, Boolean, Boolean) -> Unit,
-  enabledByParent: Boolean = true,
 ) {
   val feature = control.feature
   val applied = state.policy.applied
@@ -195,7 +201,7 @@ private fun PolicyToggle(
       Switch(
         checked = appliedValue,
         onCheckedChange = { onChange(feature, it, false) },
-        enabled = enabledByParent && !pending,
+        enabled = !pending,
       )
     }
     if (state.policy.status == PolicyApplicationStatus.Failed && pending) Text("Couldn’t apply")
@@ -205,15 +211,11 @@ private fun PolicyToggle(
 
 private enum class PolicyControl(val label: String, val feature: PolicyFeature) {
   AppBlocking("App Blocking", PolicyFeature.AppBlocking),
-  SafeBrowsing("Safe Browsing", PolicyFeature.SafeBrowsing),
-  SafeSearch("Safe Search", PolicyFeature.SafeBrowsing),
   LocationSharing("Location sharing", PolicyFeature.LocationSharing),
   ScreenTime("Screen Time", PolicyFeature.ScreenTime);
 
   fun value(policy: GuardianPolicy) = when (this) {
     AppBlocking -> policy.appBlockingEnabled
-    SafeBrowsing -> policy.safeBrowsingEnabled
-    SafeSearch -> policy.safeSearchEnabled
     LocationSharing -> policy.locationSharingEnabled
     ScreenTime -> policy.screenTimeEnabled
   }

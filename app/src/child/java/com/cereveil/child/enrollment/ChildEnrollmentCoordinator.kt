@@ -1,5 +1,7 @@
 package com.cereveil.child.enrollment
 
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.delay
 
 class ChildEnrollmentCoordinator(
@@ -165,8 +167,11 @@ class ChildDeviceTokenProvider(
   private val keyStore: ChildDeviceKeyStore,
   private val stateStore: ChildEnrollmentStateStore,
 ) {
-  suspend fun refresh(): ChildEnrollmentResult<String> {
+  suspend fun refresh(): ChildEnrollmentResult<String> = tokenRefreshMutex.withLock {
     val state = stateStore.load() ?: return ChildEnrollmentResult.Failure(ChildEnrollmentError.EnrollmentFailed)
+    if (state.accessJwtExpiresAt > System.currentTimeMillis() + 30_000) {
+      return ChildEnrollmentResult.Success(state.accessJwt)
+    }
     val challenge = when (val result = client.createTokenChallenge(state.credentialId)) {
       is ChildEnrollmentResult.Success -> result.value
       is ChildEnrollmentResult.Failure -> return result
@@ -188,3 +193,5 @@ class ChildDeviceTokenProvider(
     }
   }
 }
+
+private val tokenRefreshMutex = Mutex()

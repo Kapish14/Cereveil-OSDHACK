@@ -1,6 +1,7 @@
 package com.cereveil.child.remoteaudio
 
 import android.app.Application
+import android.util.Log
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
@@ -29,6 +30,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.jsonObject
 
 private data class ChildRemoteAudioUiState(val requestId: String? = null, val phase: String? = null)
 
@@ -41,11 +44,28 @@ private class ChildRemoteAudioViewModel(application: Application) : AndroidViewM
   private suspend fun observe() {
     @Suppress("UNCHECKED_CAST") val client = app.convex as? ConvexClientWithAuth<String> ?: return
     while (true) {
-      if (client.loginFromCache().isSuccess) {
+      val login = client.loginFromCache()
+      if (login.isSuccess) {
         val args = mapOf("childInstallationId" to ChildInstallationMetadata(app).installationId())
-        client.subscribe<Map<String, Any?>>("modules/remoteAudio/child:getRemoteAudioState", args).first().getOrNull()?.let { value ->
-          @Suppress("UNCHECKED_CAST") val request = value["request"] as? Map<String, Any?>
-          mutable.value = ChildRemoteAudioUiState(request?.get("requestId")?.toString(), request?.get("status")?.toString())
+        val result = client.subscribe<JsonElement>("modules/remoteAudio/child:getRemoteAudioState", args).first()
+        result.getOrNull()?.let { value ->
+          val request = value.jsonObject.remoteObjectOrNull("request")
+          if (request == null) {
+            ChildRemoteAudioPendingStore.clear(app)
+            mutable.value = ChildRemoteAudioUiState()
+          } else {
+            mutable.value = ChildRemoteAudioUiState(
+              request.remoteStringOrNull("requestId"),
+              request.remoteStringOrNull("status"),
+            )
+          }
+        } ?: Log.w(TAG, "Remote Audio state subscription failed", result.exceptionOrNull())
+      } else {
+        Log.w(TAG, "Child Convex authentication unavailable for Remote Audio", login.exceptionOrNull())
+      }
+      if (mutable.value.requestId == null) {
+        ChildRemoteAudioPendingStore.load(app)?.let { pending ->
+          mutable.value = ChildRemoteAudioUiState(pending.requestId, "awaiting_child")
         }
       }
       delay(2_000)
@@ -63,6 +83,8 @@ private class ChildRemoteAudioViewModel(application: Application) : AndroidViewM
     val id = mutable.value.requestId ?: return
     app.startActivity(ChildRemoteAudioStartActivity.intent(app, id).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
   }
+
+  private companion object { const val TAG = "CereveilRemoteAudio" }
 }
 
 @Composable

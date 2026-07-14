@@ -15,9 +15,6 @@ import android.content.pm.ServiceInfo
 import android.media.AudioManager
 import android.media.AudioAttributes
 import android.media.AudioFocusRequest
-import android.media.AudioFormat
-import android.media.AudioRecord
-import android.media.MediaRecorder
 import android.os.Bundle
 import android.os.IBinder
 import androidx.core.app.ActivityCompat
@@ -40,6 +37,10 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.webrtc.AudioSource
 import org.webrtc.AudioTrack
 import org.webrtc.DataChannel
@@ -60,6 +61,33 @@ private const val SESSION_CHANNEL = "remote_audio_session"
 private const val REQUEST_NOTIFICATION = 3601
 private const val SESSION_NOTIFICATION = 3602
 private const val EXTRA_REQUEST_ID = "remote_audio_request_id"
+private const val REQUEST_STATE_PREFERENCES = "remote_audio_request_state"
+
+internal data class PendingRemoteAudioRequest(val requestId: String, val expiresAt: Long)
+
+internal object ChildRemoteAudioPendingStore {
+  fun save(context: Context, requestId: String, expiresAt: Long) {
+    context.getSharedPreferences(REQUEST_STATE_PREFERENCES, Context.MODE_PRIVATE).edit()
+      .putString("requestId", requestId)
+      .putLong("expiresAt", expiresAt)
+      .apply()
+  }
+
+  fun load(context: Context): PendingRemoteAudioRequest? {
+    val preferences = context.getSharedPreferences(REQUEST_STATE_PREFERENCES, Context.MODE_PRIVATE)
+    val requestId = preferences.getString("requestId", null) ?: return null
+    val expiresAt = preferences.getLong("expiresAt", 0L)
+    if (expiresAt <= System.currentTimeMillis()) {
+      clear(context)
+      return null
+    }
+    return PendingRemoteAudioRequest(requestId, expiresAt)
+  }
+
+  fun clear(context: Context) {
+    context.getSharedPreferences(REQUEST_STATE_PREFERENCES, Context.MODE_PRIVATE).edit().clear().apply()
+  }
+}
 
 object ChildRemoteAudioNotice {
   fun present(context: Context, requestId: String, expiresAt: Long): Boolean {
@@ -69,6 +97,7 @@ object ChildRemoteAudioNotice {
       return false
     }
     val manager = context.getSystemService(NotificationManager::class.java)
+    ChildRemoteAudioPendingStore.save(context, requestId, expiresAt)
     manager.createNotificationChannel(NotificationChannel(
       REQUEST_CHANNEL,
       "Remote audio requests",
@@ -109,10 +138,11 @@ object ChildRemoteAudioNotice {
 
   fun terminate(context: Context, requestId: String, reason: String) {
     dismiss(context)
+    ChildRemoteAudioPendingStore.clear(context)
     val app = context.applicationContext as CereveilApplication
     val installationId = ChildInstallationMetadata(app).installationId()
     CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
-      app.convex.mutation<Any?>("modules/remoteAudio/child:terminateRemoteAudioRequest", mapOf(
+      app.convex.mutation<JsonElement>("modules/remoteAudio/child:terminateRemoteAudioRequest", mapOf(
         "childInstallationId" to installationId,
         "requestId" to requestId,
         "reason" to reason,
@@ -128,14 +158,14 @@ object ChildRemoteAudioRecovery {
     CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
       if (client.loginFromCache().isFailure) return@launch
       val installation = ChildInstallationMetadata(app).installationId()
-      val state = client.subscribe<Map<String, Any?>>("modules/remoteAudio/child:getRemoteAudioState", mapOf(
+      val state = client.subscribe<JsonElement>("modules/remoteAudio/child:getRemoteAudioState", mapOf(
         "childInstallationId" to installation,
-      )).first().getOrNull() ?: return@launch
-      @Suppress("UNCHECKED_CAST") val request = state["request"] as? Map<String, Any?> ?: return@launch
-      if (request["status"] == "connecting" || request["status"] == "active") {
-        client.mutation<Any?>("modules/remoteAudio/child:terminateRemoteAudioRequest", mapOf(
+      )).first().getOrNull()?.jsonObject ?: return@launch
+      val request = state.remoteObjectOrNull("request") ?: return@launch
+      if (request.remoteString("status") == "connecting" || request.remoteString("status") == "active") {
+        client.mutation<JsonElement>("modules/remoteAudio/child:terminateRemoteAudioRequest", mapOf(
           "childInstallationId" to installation,
-          "requestId" to request["requestId"].toString(),
+          "requestId" to request.remoteString("requestId"),
           "reason" to "interrupted",
         ))
       }
@@ -258,67 +288,51 @@ class ChildRemoteAudioService : Service() {
     }
     val installation = ChildInstallationMetadata(this).installationId()
     val args = mapOf("childInstallationId" to installation)
-    val state = app.convex.subscribe<Map<String, Any?>>("modules/remoteAudio/child:getRemoteAudioState", args).first().getOrNull()
-    @Suppress("UNCHECKED_CAST") val request = state?.get("request") as? Map<String, Any?>
-    if (request?.get("requestId") != id) { stopLocal(); return }
-    val expiresAt = (request["expiresAt"] as Number).toLong()
-    val serverNow = (state["serverNow"] as Number).toLong()
+    val state = app.convex.subscribe<JsonElement>("modules/remoteAudio/child:getRemoteAudioState", args)
+      .first().getOrNull()?.jsonObject
+    val request = state?.remoteObjectOrNull("request")
+    if (request?.remoteString("requestId") != id) { stopLocal(); return }
+    val expiresAt = request.remoteLong("expiresAt")
+    val serverNow = state.remoteLong("serverNow")
     val remaining = (expiresAt - serverNow).coerceAtMost(TimeUnit.MINUTES.toMillis(2))
     if (remaining <= 0) { stopLocalThenTerminate(id, "interrupted"); return }
     deadlineJob = scope.launch { delay(remaining); stopLocalThenTerminate(id, "interrupted") }
-    @Suppress("UNCHECKED_CAST") val stunUrls = state["stunUrls"] as? List<String> ?: emptyList()
+    val stunUrls = state.remoteArray("stunUrls").map { it.jsonPrimitive.content }
     if (!microphoneReady()) { stopLocalThenTerminate(id, "microphone_unavailable"); return }
     val createdSession = runCatching { ChildWebRtcSession(this, stunUrls,
       publish = { type, key, payload -> scope.launch {
-        app.convex.mutation<Any?>("modules/remoteAudio/child:publishRemoteAudioSignal", mapOf(
+        app.convex.mutation<JsonElement>("modules/remoteAudio/child:publishRemoteAudioSignal", mapOf(
           "childInstallationId" to installation, "requestId" to id, "type" to type,
           "idempotencyKey" to key, "payload" to payload,
         ))
       } },
       connected = {
         showActiveNotification(id)
-        scope.launch { app.convex.mutation<Any?>("modules/remoteAudio/child:markRemoteAudioActive", mapOf(
+        scope.launch { app.convex.mutation<JsonElement>("modules/remoteAudio/child:markRemoteAudioActive", mapOf(
           "childInstallationId" to installation, "requestId" to id,
         )) }
       },
       failed = { stopLocalThenTerminate(id, "webrtc_failed") },
     ) }.getOrElse { stopLocalThenTerminate(id, "webrtc_failed"); return }
-    val started = runCatching { app.convex.mutation<Any?>("modules/remoteAudio/child:startRemoteAudioRequest", mapOf(
+    val started = runCatching { app.convex.mutation<JsonElement>("modules/remoteAudio/child:startRemoteAudioRequest", mapOf(
       "childInstallationId" to installation, "requestId" to id,
     )) }
     if (started.isFailure) { createdSession.close(); stopLocalThenTerminate(id, "webrtc_failed"); return }
     session = createdSession
     runCatching { createdSession.start() }
       .onFailure { stopLocalThenTerminate(id, "webrtc_failed"); return }
-    app.convex.subscribe<Map<String, Any?>>("modules/remoteAudio/child:getRemoteAudioState", args).collect { result ->
-      val value = result.getOrNull() ?: return@collect
-      @Suppress("UNCHECKED_CAST") val live = value["request"] as? Map<String, Any?>
-      if (live?.get("requestId") != id) { stopLocal(); return@collect }
-      @Suppress("UNCHECKED_CAST") val signals = value["signals"] as? List<Map<String, Any?>> ?: emptyList()
+    app.convex.subscribe<JsonElement>("modules/remoteAudio/child:getRemoteAudioState", args).collect { result ->
+      val value = result.getOrNull()?.jsonObject ?: return@collect
+      val live = value.remoteObjectOrNull("request")
+      if (live?.remoteString("requestId") != id) { stopLocal(); return@collect }
+      val signals = value.remoteArray("signals").map { it.jsonObject }
       signals.forEach { session?.receive(it) }
     }
   }
 
-  private fun microphoneReady(): Boolean = runCatching {
-    val sampleRate = 48_000
-    val channel = AudioFormat.CHANNEL_IN_MONO
-    val encoding = AudioFormat.ENCODING_PCM_16BIT
-    val bufferSize = AudioRecord.getMinBufferSize(sampleRate, channel, encoding)
-    if (bufferSize <= 0) return false
-    val probe = AudioRecord.Builder()
-      .setAudioSource(MediaRecorder.AudioSource.VOICE_RECOGNITION)
-      .setAudioFormat(AudioFormat.Builder().setSampleRate(sampleRate).setChannelMask(channel).setEncoding(encoding).build())
-      .setBufferSizeInBytes(bufferSize * 2)
-      .build()
-    try {
-      if (probe.state != AudioRecord.STATE_INITIALIZED) return false
-      probe.startRecording()
-      probe.recordingState == AudioRecord.RECORDSTATE_RECORDING
-    } finally {
-      if (probe.recordingState == AudioRecord.RECORDSTATE_RECORDING) probe.stop()
-      probe.release()
-    }
-  }.getOrDefault(false)
+  private fun microphoneReady(): Boolean =
+    ActivityCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED &&
+      packageManager.hasSystemFeature(PackageManager.FEATURE_MICROPHONE)
 
   private fun showActiveNotification(id: String) {
     val stop = PendingIntent.getBroadcast(
@@ -418,12 +432,12 @@ private class ChildWebRtcSession(
     }, MediaConstraints())
   }
 
-  fun receive(signal: Map<String, Any?>) {
-    val id = signal["signalId"]?.toString() ?: return
+  fun receive(signal: JsonObject) {
+    val id = signal.remoteStringOrNull("signalId") ?: return
     if (!seenSignals.add(id)) return
-    when (signal["type"]?.toString()) {
-      "answer" -> peer.setRemoteDescription(EmptySdpObserver(), SessionDescription(SessionDescription.Type.ANSWER, signal["payload"].toString()))
-      "ice_candidate" -> decodeCandidate(signal["payload"].toString())?.let(peer::addIceCandidate)
+    when (signal.remoteStringOrNull("type")) {
+      "answer" -> peer.setRemoteDescription(EmptySdpObserver(), SessionDescription(SessionDescription.Type.ANSWER, signal.remoteString("payload")))
+      "ice_candidate" -> decodeCandidate(signal.remoteString("payload"))?.let(peer::addIceCandidate)
     }
   }
 

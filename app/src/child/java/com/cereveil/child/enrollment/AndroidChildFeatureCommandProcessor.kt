@@ -11,6 +11,7 @@ import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
 import android.os.Bundle
+import android.os.Looper
 import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
 import com.cereveil.R
@@ -93,7 +94,7 @@ class AndroidChildFeatureCommandProcessor(
   private suspend fun refreshLocation(accessJwt: String, requestId: String?): ChildEnrollmentResult<Unit> {
     if (requestId == null) return ChildEnrollmentResult.Failure(ChildEnrollmentError.ValidationFailed)
     val requestedAfter = System.currentTimeMillis() - 1_000
-    val measurement = currentLocation(showDisclosure = true)
+    val measurement = currentLocation(showDisclosure = true, minimumCapturedAt = requestedAfter)
       ?: return client.failLocationRefresh(accessJwt, requestId, "capability_unavailable")
     if (measurement.capturedAt < requestedAfter) {
       return client.failLocationRefresh(accessJwt, requestId, "measurement_failed")
@@ -131,7 +132,10 @@ class AndroidChildFeatureCommandProcessor(
       .toList()
   }
 
-  private suspend fun currentLocation(showDisclosure: Boolean): ChildLocationMeasurement? {
+  private suspend fun currentLocation(
+    showDisclosure: Boolean,
+    minimumCapturedAt: Long = 0,
+  ): ChildLocationMeasurement? {
     val hasFine = ActivityCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) ==
       PackageManager.PERMISSION_GRANTED
     val hasCoarse = ActivityCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) ==
@@ -139,15 +143,16 @@ class AndroidChildFeatureCommandProcessor(
     if (!hasFine && !hasCoarse) return null
     if (showDisclosure) showLocationDisclosure()
     val manager = context.getSystemService(LocationManager::class.java)
-    val provider = when {
-      hasFine && manager.isProviderEnabled(LocationManager.GPS_PROVIDER) -> LocationManager.GPS_PROVIDER
-      manager.isProviderEnabled(LocationManager.NETWORK_PROVIDER) -> LocationManager.NETWORK_PROVIDER
-      else -> return null
+    val providers = buildList {
+      if (hasFine && manager.isProviderEnabled(LocationManager.GPS_PROVIDER)) add(LocationManager.GPS_PROVIDER)
+      if (manager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) add(LocationManager.NETWORK_PROVIDER)
     }
+    if (providers.isEmpty()) return null
     val location = withTimeoutOrNull(45_000) {
       suspendCancellableCoroutine<Location?> { continuation ->
         val listener = object : LocationListener {
           override fun onLocationChanged(location: Location) {
+            if (location.time < minimumCapturedAt) return
             manager.removeUpdates(this)
             if (continuation.isActive) continuation.resume(location)
           }
@@ -156,11 +161,19 @@ class AndroidChildFeatureCommandProcessor(
           @Deprecated("Deprecated Android location callback")
           override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) = Unit
         }
-        runCatching { manager.requestLocationUpdates(provider, 0, 0f, listener) }
-          .onFailure { if (continuation.isActive) continuation.resume(null) }
+        var registered = false
+        providers.forEach { provider ->
+          if (runCatching {
+            manager.requestLocationUpdates(provider, 0, 0f, listener, Looper.getMainLooper())
+          }.isSuccess) registered = true
+        }
+        if (!registered && continuation.isActive) continuation.resume(null)
         continuation.invokeOnCancellation { manager.removeUpdates(listener) }
       }
-    } ?: manager.getLastKnownLocation(provider)
+    } ?: providers.asSequence()
+      .mapNotNull { manager.getLastKnownLocation(it) }
+      .filter { it.time >= minimumCapturedAt }
+      .maxByOrNull(Location::getTime)
     return location?.let { ChildLocationMeasurement(it.latitude, it.longitude, it.accuracy.toDouble(), it.time) }
   }
 

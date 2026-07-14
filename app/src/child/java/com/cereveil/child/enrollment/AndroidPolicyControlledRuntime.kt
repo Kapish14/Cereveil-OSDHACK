@@ -8,6 +8,7 @@ import android.content.pm.PackageManager
 import android.location.LocationManager
 import androidx.core.app.ActivityCompat
 import com.cereveil.child.protection.ChildSafetyModels
+import com.cereveil.child.protection.CereveilAccessibilityService
 import com.cereveil.BuildConfig
 class AndroidPolicyControlledRuntime(context: Context) : PolicyControlledRuntime {
   private val context = context.applicationContext
@@ -42,6 +43,7 @@ class AndroidPolicyControlledRuntime(context: Context) : PolicyControlledRuntime
       else ChildSafetyModels.configure(context, previousPolicy.activeScreenSafety)
       return PolicyActivationResult.RetryableFailure
     }
+    CereveilAccessibilityService.requestReevaluation(resetRequestPresentation = false)
     ChildLocationMovementRegistration.configure(context, policy.locationSharing.enabled)
     return PolicyActivationResult.Success
   }

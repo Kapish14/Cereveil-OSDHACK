@@ -14,7 +14,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
+import androidx.activity.compose.LocalActivity
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.cereveil.guardian.auth.GuardianStartupRoute
@@ -38,7 +38,7 @@ fun RoleStartupContent(modifier: Modifier = Modifier) {
   var enrollmentProfile by remember { mutableStateOf<ChildProfileSummary?>(null) }
   var refreshKey by remember { mutableIntStateOf(0) }
   var trustAccepted by rememberSaveable { mutableStateOf(false) }
-  val startupIntent = (LocalContext.current as? android.app.Activity)?.intent
+  val startupIntent = LocalActivity.current?.intent
   val requestedSafetyChild = startupIntent?.getStringExtra("safety_child_profile_id")
   val requestedSafetyFeed = startupIntent?.getBooleanExtra("open_safety_feed", false) == true
 

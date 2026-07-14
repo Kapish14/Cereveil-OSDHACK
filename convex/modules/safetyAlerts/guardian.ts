@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import { guardianQuery } from "../../lib/functionWrappers";
+import { guardianMutation, guardianQuery } from "../../lib/functionWrappers";
 import { requireGuardianForChildProfile } from "../../lib/authorize";
 
 const RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
@@ -26,5 +26,21 @@ export const listSafetyAlerts = guardianQuery({
       createdAt: row.createdAt,
       expiresAt: row.expiresAt,
     }));
+  },
+});
+
+export const clearSafetyAlerts = guardianMutation({
+  operation: "safetyAlerts.clear",
+  args: { childProfileId: v.id("childProfiles") },
+  handler: async (ctx, actor, args) => {
+    await requireGuardianForChildProfile(ctx, actor, args.childProfileId);
+    const rows = await ctx.db.query("safetyAlerts")
+      .withIndex("by_child_profile_id_and_occurred_at", (q) =>
+        q.eq("childProfileId", args.childProfileId),
+      )
+      .order("desc")
+      .take(500);
+    for (const row of rows) await ctx.db.delete("safetyAlerts", row._id);
+    return { cleared: rows.length };
   },
 });

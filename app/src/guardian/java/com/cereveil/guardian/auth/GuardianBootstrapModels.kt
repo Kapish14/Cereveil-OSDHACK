@@ -22,6 +22,8 @@ data class GuardianBootstrapState(
 sealed interface GuardianAuthState {
   data object Unauthenticated : GuardianAuthState
 
+  data object TemporarilyUnavailable : GuardianAuthState
+
   data class Authenticated(val authSessionKey: String) : GuardianAuthState
 }
 

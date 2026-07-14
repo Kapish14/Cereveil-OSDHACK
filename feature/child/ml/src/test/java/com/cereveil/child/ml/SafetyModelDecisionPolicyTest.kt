@@ -17,6 +17,14 @@ class SafetyModelDecisionPolicyTest {
   }
 
   @Test
+  fun scamSensitivityDoesNotOverrideEnfoldWinningLabelDecision() {
+    val probabilities = floatArrayOf(.94f, .02f, .012f, .008f, .006f, .005f, .004f, .005f)
+    assertFalse(SafetyModelDecisionPolicy.scamIsPositive(probabilities, ModelSensitivity.Standard))
+    assertFalse(SafetyModelDecisionPolicy.scamIsPositive(probabilities, ModelSensitivity.Higher))
+    assertFalse(SafetyModelDecisionPolicy.scamIsPositive(probabilities, ModelSensitivity.Lower))
+  }
+
+  @Test
   fun standardNsfwPreservesReviveSensitivitySixty() {
     assertEquals(.40f, SafetyModelDecisionPolicy.nsfwThreshold(ModelSensitivity.Standard))
     assertTrue(SafetyModelDecisionPolicy.nsfwThreshold(ModelSensitivity.Higher) < .40f)

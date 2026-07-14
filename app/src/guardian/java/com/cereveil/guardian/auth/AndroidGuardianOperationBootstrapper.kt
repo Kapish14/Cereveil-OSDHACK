@@ -7,7 +7,7 @@ import com.cereveil.RoleInitializer
 class AndroidGuardianOperationBootstrapper(context: Context) : GuardianOperationBootstrapper {
   private val coordinator =
     GuardianBootstrapCoordinator(
-      authSessionProvider = RoleInitializer.guardianAuthSessionProvider(),
+      authSessionProvider = RoleInitializer.guardianAuthSessionProvider(context),
       localStateRepository = SharedPreferencesGuardianLocalStateRepository(context),
       metadataProvider =
         AndroidGuardianInstallationMetadataProvider(

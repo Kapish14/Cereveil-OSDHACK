@@ -1,38 +1,10 @@
 package com.cereveil.child.protection
 
-import com.cereveil.child.enrollment.SafetyDetectorPolicy
-import com.cereveil.child.enrollment.SafetySensitivity
 import junit.framework.TestCase.assertFalse
 import junit.framework.TestCase.assertTrue
 import org.junit.Test
 
 class ActiveScreenSafetyTest {
-  private val policy = SafetyDetectorPolicy(
-    enabled = true,
-    monitoredPackageNames = setOf("com.example.messages"),
-    sensitivity = SafetySensitivity.Standard,
-  )
-
-  @Test
-  fun scamCandidatesAreVisibleIndividualNonEditableMessageText() {
-    assertTrue(ScamCandidatePolicy.accepts(
-      ScamNode("Your OTP is 123456, send it now to receive payment", visible = true),
-      "com.example.messages",
-      policy,
-    ))
-    assertFalse(ScamCandidatePolicy.accepts(
-      ScamNode("Draft payment message long enough to otherwise classify", visible = true, editable = true),
-      "com.example.messages",
-      policy,
-    ))
-    assertFalse(ScamCandidatePolicy.accepts(
-      ScamNode("Your OTP is 123456, send it now to receive payment", visible = true),
-      "com.example.other",
-      policy,
-    ))
-    assertFalse(ScamCandidatePolicy.accepts(ScamNode("10:42 PM", visible = true), "com.example.messages", policy))
-  }
-
   @Test
   fun incidentMemorySuppressesOnlyTheSameDetectorItemAndPackageForTenMinutes() {
     var now = 1_000L

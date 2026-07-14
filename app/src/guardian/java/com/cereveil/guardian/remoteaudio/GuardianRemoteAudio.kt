@@ -31,6 +31,11 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.cereveil.CereveilApplication
+import com.cereveil.guardian.arrayOrEmpty
+import com.cereveil.guardian.long
+import com.cereveil.guardian.objectOrNull
+import com.cereveil.guardian.string
+import com.cereveil.guardian.stringOrNull
 import com.cereveil.guardian.auth.AndroidGuardianOperationBootstrapper
 import com.cereveil.guardian.auth.SharedPreferencesGuardianInstallationIdProvider
 import com.cereveil.ui.CereveilCard
@@ -45,6 +50,10 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.webrtc.AudioTrack
 import org.webrtc.DataChannel
 import org.webrtc.IceCandidate
@@ -87,33 +96,33 @@ class GuardianRemoteAudioViewModel(application: Application, private val childPr
       if (it == null) AndroidGuardianOperationBootstrapper(app).ensureBootstrapped()
     } ?: installation.getInstallationId()
     val id = installationId ?: return
-    convex.subscribe<Map<String, Any?>>("modules/remoteAudio/guardian:getRemoteAudioState", mapOf(
+    convex.subscribe<JsonElement>("modules/remoteAudio/guardian:getRemoteAudioState", mapOf(
       "guardianInstallationId" to id, "childProfileId" to childProfileId,
     )).collect { result ->
       result.onFailure { mutable.value = mutable.value.copy(message = "Remote Audio is unavailable.") }
-      result.onSuccess(::acceptState)
+      result.onSuccess { acceptState(it.jsonObject) }
     }
   }
 
-  private fun acceptState(value: Map<String, Any?>) {
-    val availability = value["availability"].toString()
-    @Suppress("UNCHECKED_CAST") val request = value["request"] as? Map<String, Any?>
+  private fun acceptState(value: JsonObject) {
+    val availability = value.string("availability")
+    val request = value.objectOrNull("request")
     if (request == null) {
       closePeer()
       mutable.value = GuardianRemoteAudioState(
         availability = availability,
-        reason = value["reason"]?.toString(),
-        cooldownUntil = (value["cooldownUntil"] as? Number)?.toLong(),
+        reason = value.stringOrNull("reason"),
+        cooldownUntil = value.stringOrNull("cooldownUntil")?.toDoubleOrNull()?.toLong(),
       )
       return
     }
-    val requestId = request["requestId"].toString()
-    val expiresAt = (request["expiresAt"] as Number).toLong()
-    val serverNow = (value["serverNow"] as Number).toLong()
+    val requestId = request.string("requestId")
+    val expiresAt = request.long("expiresAt")
+    val serverNow = value.long("serverNow")
     mutable.value = GuardianRemoteAudioState(
       availability = availability,
       requestId = requestId,
-      phase = request["status"].toString(),
+      phase = request.string("status"),
       expiresAt = expiresAt,
       remainingSeconds = ((expiresAt - serverNow).coerceAtLeast(0) + 999) / 1000,
     )
@@ -128,9 +137,9 @@ class GuardianRemoteAudioViewModel(application: Application, private val childPr
         delay(250)
       }
     }
-    if (screenVisible && request["status"] != "awaiting_child") {
-      @Suppress("UNCHECKED_CAST") val signals = value["signals"] as? List<Map<String, Any?>> ?: emptyList()
-      @Suppress("UNCHECKED_CAST") val stun = value["stunUrls"] as? List<String> ?: emptyList()
+    if (screenVisible && request.string("status") != "awaiting_child") {
+      val signals = value.arrayOrEmpty("signals").map { it.jsonObject }
+      val stun = value.arrayOrEmpty("stunUrls").map { it.jsonPrimitive.content }
       ensurePeer(requestId, stun, signals)
       signals.forEach { peer?.receive(it) }
     }
@@ -140,7 +149,7 @@ class GuardianRemoteAudioViewModel(application: Application, private val childPr
     val id = installationId ?: return
     viewModelScope.launch {
       runCatching {
-        convex.mutation<Any?>("modules/remoteAudio/guardian:createRemoteAudioRequest", mapOf(
+        convex.mutation<JsonElement>("modules/remoteAudio/guardian:createRemoteAudioRequest", mapOf(
           "guardianInstallationId" to id,
           "childProfileId" to childProfileId,
           "operationId" to UUID.randomUUID().toString(),
@@ -151,7 +160,9 @@ class GuardianRemoteAudioViewModel(application: Application, private val childPr
 
   fun setScreenVisible(visible: Boolean) {
     screenVisible = visible
-    if (!visible && mutable.value.requestId != null) stop()
+    // Guardian and Child debug flavors may be exercised on one phone. Backgrounding Guardian to
+    // accept the disclosed Child notification must not cancel the bounded request. Explicit UI
+    // dismissal still calls stop(), and the backend always expires the request at its deadline.
   }
 
   fun stop() {
@@ -160,7 +171,7 @@ class GuardianRemoteAudioViewModel(application: Application, private val childPr
     closePeer()
     mutable.value = mutable.value.copy(requestId = null, phase = null)
     viewModelScope.launch {
-      convex.mutation<Any?>("modules/remoteAudio/guardian:terminateRemoteAudioRequest", mapOf(
+      convex.mutation<JsonElement>("modules/remoteAudio/guardian:terminateRemoteAudioRequest", mapOf(
         "guardianInstallationId" to id, "requestId" to requestId,
       ))
     }
@@ -169,19 +180,19 @@ class GuardianRemoteAudioViewModel(application: Application, private val childPr
   fun stopOtherDeviceSession() {
     val id = installationId ?: return
     viewModelScope.launch {
-      convex.mutation<Any?>("modules/remoteAudio/guardian:terminateRemoteAudioForChild", mapOf(
+      convex.mutation<JsonElement>("modules/remoteAudio/guardian:terminateRemoteAudioForChild", mapOf(
         "guardianInstallationId" to id, "childProfileId" to childProfileId,
       ))
     }
   }
 
-  private fun ensurePeer(requestId: String, stun: List<String>, signals: List<Map<String, Any?>>) {
+  private fun ensurePeer(requestId: String, stun: List<String>, signals: List<JsonObject>) {
     if (peer != null) return
-    val offer = signals.firstOrNull { it["type"] == "offer" } ?: return
+    val offer = signals.firstOrNull { it.string("type") == "offer" } ?: return
     val id = installationId ?: return
     peer = runCatching { GuardianWebRtcSession(app, stun, publish = { type, key, payload ->
       viewModelScope.launch(Dispatchers.IO) {
-        convex.mutation<Any?>("modules/remoteAudio/guardian:publishRemoteAudioSignal", mapOf(
+        convex.mutation<JsonElement>("modules/remoteAudio/guardian:publishRemoteAudioSignal", mapOf(
           "guardianInstallationId" to id, "requestId" to requestId, "type" to type,
           "idempotencyKey" to key, "payload" to payload,
         ))
@@ -293,18 +304,18 @@ private class GuardianWebRtcSession(
       check(audioManager.isSpeakerphoneOn) { "Built-in speaker route unavailable" }
     }
   }
-  fun receive(signal: Map<String, Any?>) {
-    val id = signal["signalId"]?.toString() ?: return
+  fun receive(signal: JsonObject) {
+    val id = signal.stringOrNull("signalId") ?: return
     if (!seen.add(id)) return
-    when (signal["type"]?.toString()) {
+    when (signal.stringOrNull("type")) {
       "offer" -> peer.setRemoteDescription(SetObserver {
         peer.createAnswer(SdpSetObserver { answer ->
           val recvOnly = SessionDescription(answer.type, answer.description.replace("a=sendrecv", "a=recvonly"))
           peer.setLocalDescription(EmptySdpObserver(), recvOnly)
           publish("answer", UUID.randomUUID().toString(), recvOnly.description)
         }, MediaConstraints())
-      }, SessionDescription(SessionDescription.Type.OFFER, signal["payload"].toString()))
-      "ice_candidate" -> decodeCandidate(signal["payload"].toString())?.let(peer::addIceCandidate)
+      }, SessionDescription(SessionDescription.Type.OFFER, signal.string("payload")))
+      "ice_candidate" -> decodeCandidate(signal.string("payload"))?.let(peer::addIceCandidate)
     }
   }
   override fun onIceCandidate(candidate: IceCandidate) = publish("ice_candidate", UUID.randomUUID().toString(), encodeCandidate(candidate))

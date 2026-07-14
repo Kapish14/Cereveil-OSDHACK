@@ -152,10 +152,11 @@ export const recordDeliveryOutcome = internalMutation({
       const notice = noticeId === null ? null : await ctx.db.get("guardianNotices", noticeId);
       if (notice === null) return null;
     }
+    const { serverNow, ...attempt } = args;
     await ctx.db.insert("fcmDeliveryAttempts", {
-      ...args,
-      attemptedAt: args.serverNow,
-      expiresAt: args.serverNow + 7 * 24 * 60 * 60 * 1000,
+      ...attempt,
+      attemptedAt: serverNow,
+      expiresAt: serverNow + 7 * 24 * 60 * 60 * 1000,
     });
     return null;
   },

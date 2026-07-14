@@ -5,6 +5,7 @@ import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession
 import android.content.Context
 import android.graphics.Bitmap
+import org.json.JSONObject
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.FloatBuffer
@@ -18,6 +19,8 @@ data class ScamClassification(
   val isScam: Boolean,
   val confidence: Float,
   val confidenceBand: ConfidenceBand,
+  val label: String,
+  val labelId: Int,
 )
 
 data class NsfwClassification(
@@ -59,38 +62,39 @@ internal fun softmax(logits: FloatArray): FloatArray {
 }
 
 object SafetyModelDecisionPolicy {
-  const val VERSION = "safety-sensitivity-v1"
-  private const val LOWER_SCAM_TOP_FLOOR = .70f
-  private const val HIGHER_SCAM_ANY_FRAUD_FLOOR = .35f
+  const val VERSION = "enfold-revive-parity-v1"
 
   fun scamIsPositive(probabilities: FloatArray, sensitivity: ModelSensitivity): Boolean {
     require(probabilities.size >= 8)
     val bestIndex = probabilities.indices.maxBy { probabilities[it] }
-    val bestFraud = (2..7).maxOf { probabilities[it] }
-    return when (sensitivity) {
-      ModelSensitivity.Standard -> bestIndex in 2..7
-      ModelSensitivity.Lower -> bestIndex in 2..7 && probabilities[bestIndex] >= LOWER_SCAM_TOP_FLOOR
-      ModelSensitivity.Higher -> bestIndex in 2..7 || bestFraud >= HIGHER_SCAM_ANY_FRAUD_FLOOR
-    }
+    // Enfold has no sensitivity override: winning label ids 2..7 always alert.
+    return bestIndex in 2..7
   }
 
   fun nsfwThreshold(sensitivity: ModelSensitivity): Float = when (sensitivity) {
     ModelSensitivity.Lower -> .60f
     ModelSensitivity.Standard -> .40f
-    ModelSensitivity.Higher -> .25f
+    // Matches Revive's shipped default for its high-sensitivity protection profile.
+    ModelSensitivity.Higher -> .10f
   }
 }
 
 class OnDeviceScamTextClassifier(context: Context) : ScamTextClassifier {
   private val appContext = context.applicationContext
   private var session: OrtSession? = null
-  private var tokenizer: IndicBertTokenizer? = null
+  private var tokenizer: IndiBertTokenizer? = null
+  private var labelMap: Map<Int, String> = emptyMap()
   override val isInitialized get() = session != null
 
   @Synchronized
   override fun initialize() {
     if (session != null) return
-    tokenizer = IndicBertTokenizer(appContext)
+    val labels = appContext.assets.open("models/fraud-classifier/label_map.json")
+      .bufferedReader().use { JSONObject(it.readText()) }
+    labelMap = buildMap {
+      for (key in labels.keys()) put(key.toInt(), labels.getString(key))
+    }
+    tokenizer = IndiBertTokenizer(appContext)
     val bytes = appContext.assets.open("models/fraud-classifier/model_int8.onnx").use { it.readBytes() }
     session = CereveilOnnxRuntime.environment.createSession(
       bytes,
@@ -114,10 +118,15 @@ class OnDeviceScamTextClassifier(context: Context) : ScamTextClassifier {
             @Suppress("UNCHECKED_CAST")
             val probabilities = softmax((result[0].value as Array<FloatArray>)[0])
             val bestIndex = probabilities.indices.maxBy { probabilities[it] }
-            val bestFraud = (2..7).maxOf { probabilities.getOrElse(it) { 0f } }
             val positive = SafetyModelDecisionPolicy.scamIsPositive(probabilities, sensitivity)
-            val confidence = if (bestIndex in 2..7) probabilities[bestIndex] else bestFraud
-            return ScamClassification(positive, confidence, confidenceBand(confidence))
+            val confidence = probabilities[bestIndex]
+            return ScamClassification(
+              isScam = positive,
+              confidence = confidence,
+              confidenceBand = confidenceBand(confidence),
+              label = labelMap[bestIndex] ?: "unknown",
+              labelId = bestIndex,
+            )
           }
         }
       }
@@ -129,6 +138,7 @@ class OnDeviceScamTextClassifier(context: Context) : ScamTextClassifier {
     session?.close()
     session = null
     tokenizer = null
+    labelMap = emptyMap()
   }
 }
 

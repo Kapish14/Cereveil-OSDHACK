@@ -18,8 +18,13 @@ class GuardianBootstrapCoordinator(
     canRetry = false
 
     val authState = authSessionProvider.currentState()
-    if (authState !is GuardianAuthState.Authenticated) {
-      return remember(GuardianStartupRoute.Auth)
+    when (authState) {
+      GuardianAuthState.Unauthenticated -> return remember(GuardianStartupRoute.Auth)
+      GuardianAuthState.TemporarilyUnavailable -> {
+        canRetry = true
+        return remember(GuardianStartupRoute.RetryableError)
+      }
+      is GuardianAuthState.Authenticated -> Unit
     }
 
     val storedState = localStateRepository.getBootstrapState()
