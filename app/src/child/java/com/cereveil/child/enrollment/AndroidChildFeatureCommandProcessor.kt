@@ -3,6 +3,7 @@ package com.cereveil.child.enrollment
 import android.Manifest
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.usage.UsageEvents
 import android.app.usage.UsageStatsManager
 import android.content.Context
 import android.content.Intent
@@ -109,13 +110,24 @@ class AndroidChildFeatureCommandProcessor(
     val dayStart = LocalDate.now(zone).atStartOfDay(zone).toInstant().toEpochMilli()
     val validUntil = LocalDate.now(zone).plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
     val allowedPackages = launcherApps().mapTo(mutableSetOf()) { it.packageName }
-    val usage = context.getSystemService(UsageStatsManager::class.java)
-      .queryUsageStats(UsageStatsManager.INTERVAL_DAILY, dayStart, now).orEmpty()
-      .filter { it.packageName in allowedPackages && it.totalTimeInForeground > 0 }
-      .groupBy { it.packageName }
-      .map { (packageName, rows) -> ChildScreenTimeRow(packageName, rows.maxOf { it.totalTimeInForeground }) }
-      .sortedByDescending { it.totalTimeInForegroundMs }
-      .take(500)
+    val manager = context.getSystemService(UsageStatsManager::class.java)
+    val rawEvents = manager.queryEvents(dayStart - USAGE_EVENT_LOOKBACK_MS, now)
+    val next = UsageEvents.Event()
+    val events = buildList {
+      while (rawEvents.hasNextEvent()) {
+        rawEvents.getNextEvent(next)
+        val kind = when (next.eventType) {
+          UsageEvents.Event.ACTIVITY_RESUMED -> ChildUsageEventKind.Foreground
+          UsageEvents.Event.ACTIVITY_PAUSED -> ChildUsageEventKind.Background
+          UsageEvents.Event.SCREEN_INTERACTIVE -> ChildUsageEventKind.ScreenInteractive
+          UsageEvents.Event.SCREEN_NON_INTERACTIVE -> ChildUsageEventKind.ScreenNonInteractive
+          UsageEvents.Event.DEVICE_SHUTDOWN -> ChildUsageEventKind.DeviceShutdown
+          else -> null
+        }
+        if (kind != null) add(ChildUsageEvent(next.packageName?.toString().orEmpty(), next.timeStamp, kind))
+      }
+    }
+    val usage = aggregateChildScreenTime(events, allowedPackages, dayStart, now)
     return client.uploadScreenTime(accessJwt, requestId, now, dayStart, validUntil, usage)
   }
 
@@ -194,6 +206,7 @@ class AndroidChildFeatureCommandProcessor(
   }
 
   private companion object {
+    const val USAGE_EVENT_LOOKBACK_MS = 24 * 60 * 60 * 1000L
     val SUPPORTED = setOf("reconcile_access_grants", "refresh_location", "refresh_screen_time", "request_remote_audio")
   }
 }
