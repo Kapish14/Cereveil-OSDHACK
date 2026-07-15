@@ -104,8 +104,8 @@ describe("createChildProfile", () => {
       schemaVersion: 2,
       appBlocking: { enabled: false, rules: [] },
       activeScreenSafety: { enabled: false },
-      locationSharing: { enabled: false },
-      screenTime: { enabled: false },
+      locationSharing: { enabled: true },
+      screenTime: { enabled: true },
       createdByGuardianAccountId: rows.guardianAccounts[0]._id,
     });
     expect(rows.supervisionPolicies[0].safeBrowsing).toEqual({

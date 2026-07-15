@@ -70,8 +70,8 @@ export async function createChildProfile(
     activeScreenSafety: {
       enabled: false,
     },
-    locationSharing: { enabled: false },
-    screenTime: { enabled: false },
+    locationSharing: { enabled: true },
+    screenTime: { enabled: true },
     createdByGuardianAccountId: guardianAccountId,
     createdAt: serverNow,
   });
