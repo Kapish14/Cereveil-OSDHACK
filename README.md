@@ -24,6 +24,14 @@ Both models are bundled inside the Child APK and run without a network connectio
 
 Active Screen Safety is intentionally exposed only in **debug/development builds** while accessibility screenshot behavior and distribution-policy compliance are validated. Release builds reject policies that enable these detectors.
 
+### How the real-time interventions work
+
+**Scam warning overlay.** In a Guardian-selected supported messaging app, Child Mode listens for visible window-content changes and debounces repeated events for two seconds. It extracts visible text nodes containing at least 20 characters, suppresses text already present in its in-memory hash cache, and runs the IndicBERT classifier serially on a background dispatcher. A positive fraud label opens a large, generic `SCAM DETECTED` accessibility overlay. The overlay deliberately does not repeat the private message or expose the predicted class/confidence. The Child can dismiss it immediately, and it otherwise closes after 15 seconds. Only metadata is reported to Guardian Mode.
+
+**Real-time NSFW blur.** While an enabled monitored app is in the foreground and the screen is interactive, Child Mode takes temporary accessibility screenshots, discovers visible image-like nodes, crops those regions, and classifies each crop locally. Positive regions are downscaled, repeatedly box-blurred, scaled back to their original size, and placed over the matching accessibility bounds. During scrolling, the overlay follows refreshed node bounds, shifts with scroll deltas, merges newly detected regions, and is removed when the node leaves the viewport, the foreground app changes, or the content no longer remains live. A `Hide for 3s` action lets the Child temporarily dismiss a likely false positive.
+
+The blur is a best-effort visual intervention, **not a 100% perfect censoring boundary**. Accessibility bounds can be incomplete, stale, or unavailable; fast scrolling, animations, video/canvas rendering, secure windows, OEM differences, and inference delay can briefly expose content or leave the blur misaligned. The classifier can also blur safe material such as artwork, sports, medical imagery, memes, or skin-heavy thumbnails. Scam detection likewise can warn on legitimate urgent banking/OTP language or miss obfuscated and image-only scams. Cereveil therefore treats both detectors as assistive signals and expects false positives and false negatives.
+
 ## Implemented safety slice
 
 - Five-minute, single-use QR enrollment with a non-exportable Android Keystore device key.
@@ -151,14 +159,14 @@ npm run convex:dev
 
 ## Build and install both role builds
 
-### Download the hackathon APKs
+### Download the ready-to-install APKs
 
 Ready-to-install APKs are kept in [`apks/`](apks/):
 
 - [`Cereveil-Guardian.apk`](apks/Cereveil-Guardian.apk)
 - [`Cereveil-Child.apk`](apks/Cereveil-Child.apk)
 
-These are debug-signed role builds for the hackathon demo. They use the development package names above and keep the development-only Local AI experience available. Git LFS is required when cloning the repository so the APK contents are downloaded instead of only their pointer files.
+These are debug-signed role builds for the project demo. They use the development package names above and keep the development-only Local AI experience available. Git LFS is required when cloning the repository so the APK contents are downloaded instead of only their pointer files.
 
 Install them on separate Android devices by downloading each APK and allowing installation from that source, or use ADB:
 
@@ -167,7 +175,7 @@ adb -s <guardian-serial> install -r apks/Cereveil-Guardian.apk
 adb -s <child-serial> install -r apks/Cereveil-Child.apk
 ```
 
-### Rebuild the hackathon APKs
+### Rebuild the APKs
 
 Build the two debug APKs from `main`:
 
@@ -252,6 +260,8 @@ NSFW input: display a test image inside an explicitly selected foreground app.
 
 Expected result: positive image regions are covered by an accessibility overlay containing a blurred copy of the region. The screenshot bitmap is transient and is not uploaded or saved by Cereveil.
 
+This result is not guaranteed for every frame or app. A false positive may blur safe content, and the overlay may briefly lag or misalign while content is moving. The Child can use `Hide for 3s` when a blur is clearly incorrect.
+
 ## Verify the project
 
 ```bash
@@ -278,11 +288,3 @@ Connected-device model smoke test (optional; not an accuracy benchmark):
 - [PRIVACY_AND_SAFETY.md](PRIVACY_AND_SAFETY.md) — permissions, storage, retention, risks, and mitigations
 - [ATTRIBUTION.md](ATTRIBUTION.md) — models, datasets, libraries, APIs, and pre-existing work
 - [CONTEXT.md](CONTEXT.md) and [docs/adr](docs/adr) — domain vocabulary and detailed decisions
-
-## Submission caveats
-
-- Active Screen Safety is a development-only implementation in the current branch.
-- Inference latency and peak memory have not been formally benchmarked for this submission.
-- The retained fraud-model notebook defines the evaluation, but its numeric execution outputs and underlying private training records are not committed. No unsupported accuracy number is claimed.
-- The upstream NSFW model card reports 98.56% on its proprietary 20,000-image test split; that is an upstream baseline, not a measured score for Cereveil's quantized Android pipeline.
-- Cereveil is assistive family-safety software, not proof of wrongdoing, an emergency service, or a substitute for Guardian judgment and conversation.
