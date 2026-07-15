@@ -356,6 +356,10 @@ private fun GuardianDashboard(
                 GuardianCard {
                   Text("Connect your child's device", style = MaterialTheme.typography.titleLarge)
                   Text("Supervision is paused. Setup must be completed on your child's phone to start protection.")
+                  GuardianPrimaryButton(
+                    text = "Set up child device",
+                    onClick = { /* TODO: wire action */ }
+                  )
                 }
               } else {
                 GuardianProtectionCard(
