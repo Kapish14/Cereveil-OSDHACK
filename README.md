@@ -269,6 +269,10 @@ Expected result: positive image regions are covered by an accessibility overlay 
 
 This result is not guaranteed for every frame or app. A false positive may blur safe content, and the overlay may briefly lag or misalign while content is moving. The Child can use `Hide for 3s` when a blur is clearly incorrect.
 
+### Unfinished live-call scam prototype
+
+A separate `EnfoldAIExpansion` prototype explored detecting scams during phone calls by incrementally transcribing an active device call recording on-device, classifying new transcript segments for fraud, and showing an in-call warning. This feature could not be completed or integrated into Cereveil within the available time and is **not implemented or included in the current APKs**.
+
 ## Verify the project
 
 ```bash
