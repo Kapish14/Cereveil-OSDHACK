@@ -8,6 +8,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
@@ -20,6 +21,7 @@ private const val CREATE_CODE = "modules/deviceIdentity/guardian:createEnrollmen
 private const val CANCEL_CODE = "modules/deviceIdentity/guardian:cancelEnrollmentCode"
 private const val ENROLLMENT_SUMMARY = "modules/deviceIdentity/guardian:getEnrollmentSummary"
 private const val REPLACE_CHILD_DEVICE = "modules/deviceIdentity/guardian:replaceChildDevice"
+private const val END_SUPERVISION = "modules/deviceIdentity/guardian:endSupervision"
 
 class ConvexGuardianEnrollmentClient(
   private val convex: ConvexClient,
@@ -77,6 +79,24 @@ class ConvexGuardianEnrollmentClient(
         "childProfileId" to childProfileId,
       ))
       GuardianEnrollmentResult.Success(Unit)
+    } catch (error: ConvexError) {
+      GuardianEnrollmentResult.Failure(mapError(error.data))
+    } catch (_: Exception) {
+      GuardianEnrollmentResult.Failure(GuardianEnrollmentError.Retryable)
+    }
+
+  override suspend fun endSupervision(childProfileId: String): GuardianEnrollmentResult<Unit> =
+    try {
+      if (!prepareAuth()) return GuardianEnrollmentResult.Failure(GuardianEnrollmentError.Unauthenticated)
+      val installationId = installationIdAfterBootstrap()
+        ?: return GuardianEnrollmentResult.Failure(GuardianEnrollmentError.BootstrapRequired)
+      convex.mutation<EndSupervisionWire>(END_SUPERVISION, mapOf(
+        "guardianInstallationId" to installationId,
+        "childProfileId" to childProfileId,
+      ))
+      GuardianEnrollmentResult.Success(Unit)
+    } catch (error: CancellationException) {
+      throw error
     } catch (error: ConvexError) {
       GuardianEnrollmentResult.Failure(mapError(error.data))
     } catch (_: Exception) {
@@ -178,6 +198,9 @@ private data class EnrollmentSummaryWire(
   val protectionHealthStatus: String,
   val serverNow: Double,
 )
+
+@Serializable
+private data class EndSupervisionWire(val ended: Boolean)
 
 @Serializable
 private data class ReplaceChildDeviceWire(val replaced: Boolean)

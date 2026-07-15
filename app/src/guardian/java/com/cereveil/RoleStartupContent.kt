@@ -2,6 +2,7 @@ package com.cereveil
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -14,6 +15,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import androidx.activity.compose.LocalActivity
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -41,6 +43,8 @@ private fun GuardianRoleStartupContent(modifier: Modifier = Modifier) {
   val startupViewModel: GuardianStartupViewModel = viewModel()
   val route by startupViewModel.route.collectAsStateWithLifecycle()
   val authSessionKey by startupViewModel.setupAuthSessionKey.collectAsStateWithLifecycle()
+  val signOutInProgress by startupViewModel.signOutInProgress.collectAsStateWithLifecycle()
+  val signOutFailed by startupViewModel.signOutFailed.collectAsStateWithLifecycle()
   var enrollmentProfile by remember { mutableStateOf<ChildProfileSummary?>(null) }
   var refreshKey by remember { mutableIntStateOf(0) }
   var trustAccepted by rememberSaveable { mutableStateOf(false) }
@@ -71,6 +75,10 @@ private fun GuardianRoleStartupContent(modifier: Modifier = Modifier) {
           modifier = modifier,
           authSessionKey = authSessionKey,
           onSetUpChildDevice = { enrollmentProfile = it },
+          onSupervisionEnded = { refreshKey += 1 },
+          onSignOut = startupViewModel::signOut,
+          signOutInProgress = signOutInProgress,
+          signOutFailed = signOutFailed,
           refreshKey = refreshKey,
           initialDetailProfileId = requestedSafetyChild,
           initialOpenSafetyFeed = requestedSafetyFeed,
@@ -82,6 +90,10 @@ private fun GuardianRoleStartupContent(modifier: Modifier = Modifier) {
         modifier = modifier,
         authSessionKey = authSessionKey,
         onSetUpChildDevice = { enrollmentProfile = it },
+        onSupervisionEnded = { refreshKey += 1 },
+        onSignOut = startupViewModel::signOut,
+        signOutInProgress = signOutInProgress,
+        signOutFailed = signOutFailed,
         refreshKey = refreshKey,
         initialDetailProfileId = requestedSafetyChild,
         initialOpenSafetyFeed = requestedSafetyFeed,
@@ -90,11 +102,19 @@ private fun GuardianRoleStartupContent(modifier: Modifier = Modifier) {
       GuardianBlockingState(
         title = "This Guardian Device was revoked",
         message = "This installation no longer has access to the Guardian Account.",
+        action = guardianLogoutActionLabel(signOutInProgress),
+        onAction = startupViewModel::signOut,
+        actionEnabled = !signOutInProgress,
+        actionError = guardianLogoutError(signOutFailed),
       )
     GuardianStartupRoute.DeviceLimitReached ->
       GuardianBlockingState(
         title = "Guardian Device limit reached",
         message = "This Guardian Account already has two active Guardian Devices. Use an existing device to continue.",
+        action = guardianLogoutActionLabel(signOutInProgress),
+        onAction = startupViewModel::signOut,
+        actionEnabled = !signOutInProgress,
+        actionError = guardianLogoutError(signOutFailed),
       )
     GuardianStartupRoute.RetryableError ->
       GuardianBlockingState(
@@ -133,7 +153,11 @@ private fun GuardianLoadingContent() {
       verticalArrangement = Arrangement.Center,
     ) {
       CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
-      Text("Starting Guardian Mode", modifier = Modifier.fillMaxWidth())
+      Text(
+        "Starting Guardian Mode",
+        modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
+        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+      )
     }
   }
 }
@@ -170,12 +194,15 @@ private fun GuardianBlockingState(
   message: String,
   action: String? = null,
   onAction: () -> Unit = {},
+  actionEnabled: Boolean = true,
+  actionError: String? = null,
 ) {
   GuardianScreen {
     GuardianHeader(compact = true)
     GuardianTitle(title, message)
     GuardianNotice("Your account and Child data remain protected.")
-    if (action != null) GuardianPrimaryButton(action, onAction)
+    actionError?.let { GuardianNotice(it) }
+    if (action != null) GuardianPrimaryButton(action, onAction, enabled = actionEnabled)
   }
 }
 
@@ -189,3 +216,9 @@ internal fun guardianStartupDisplayName(route: GuardianStartupRoute): String =
     GuardianStartupRoute.DeviceLimitReached -> "Guardian Device limit reached"
     GuardianStartupRoute.RetryableError -> "Connection problem"
   }
+
+internal fun guardianLogoutActionLabel(signOutInProgress: Boolean): String =
+  if (signOutInProgress) "Logging out…" else "Log out"
+
+internal fun guardianLogoutError(signOutFailed: Boolean): String? =
+  if (signOutFailed) "Cereveil could not log out. Check your connection and try again." else null

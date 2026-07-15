@@ -43,17 +43,15 @@ async function drainEnrollment(ctx: MutationCtx, enrollmentId: Id<"activeEnrollm
     if (cooldown !== null) await ctx.db.delete("remoteAudioCooldowns", cooldown._id);
   }
   if (!await deleteEnrollmentFeatureBatch(ctx, enrollmentId)) return false;
-  const commands = await ctx.db.query("childDeviceCommands")
-    .withIndex("by_active_enrollment_id_and_status", (q) => q.eq("activeEnrollmentId", enrollmentId)).take(BATCH);
-  if (commands.length > 0) {
-    for (const row of commands) {
-      if (row.type === "request_remote_audio") {
-        const attempts = await ctx.db.query("fcmDeliveryAttempts")
-          .withIndex("by_record_kind_and_record_id", (q) => q.eq("recordKind", "childDeviceCommand").eq("recordId", row._id)).take(BATCH);
-        for (const attempt of attempts) await ctx.db.delete("fcmDeliveryAttempts", attempt._id);
-      }
-      await ctx.db.delete("childDeviceCommands", row._id);
-    }
+  const command = (await ctx.db.query("childDeviceCommands")
+    .withIndex("by_active_enrollment_id_and_status", (q) => q.eq("activeEnrollmentId", enrollmentId)).take(1)).at(0);
+  if (command !== undefined) {
+    const attempts = await ctx.db.query("fcmDeliveryAttempts")
+      .withIndex("by_record_kind_and_record_id", (q) =>
+        q.eq("recordKind", "childDeviceCommand").eq("recordId", command._id),
+      ).take(BATCH);
+    for (const attempt of attempts) await ctx.db.delete("fcmDeliveryAttempts", attempt._id);
+    if (attempts.length === 0) await ctx.db.delete("childDeviceCommands", command._id);
     return false;
   }
   const notice = (await ctx.db.query("guardianNotices")
@@ -62,7 +60,13 @@ async function drainEnrollment(ctx: MutationCtx, enrollmentId: Id<"activeEnrollm
     const receipts = await ctx.db.query("guardianNoticeReceipts")
       .withIndex("by_guardian_notice_id_and_guardian_device_id", (q) => q.eq("guardianNoticeId", notice._id)).take(BATCH);
     for (const receipt of receipts) await ctx.db.delete("guardianNoticeReceipts", receipt._id);
-    if (receipts.length === 0) await ctx.db.delete("guardianNotices", notice._id);
+    if (receipts.length > 0) return false;
+    const attempts = await ctx.db.query("fcmDeliveryAttempts")
+      .withIndex("by_record_kind_and_record_id", (q) =>
+        q.eq("recordKind", "guardianNotice").eq("recordId", notice._id),
+      ).take(BATCH);
+    for (const attempt of attempts) await ctx.db.delete("fcmDeliveryAttempts", attempt._id);
+    if (attempts.length === 0) await ctx.db.delete("guardianNotices", notice._id);
     return false;
   }
   return true;
@@ -92,9 +96,23 @@ export const finalizeEndSupervision = internalMutation({
       const credentials = await ctx.db.query("childDeviceCredentials")
         .withIndex("by_active_enrollment_id_and_status", (q) => q.eq("activeEnrollmentId", enrollment._id)).take(10);
       for (const credential of credentials) {
+        const revocationProof = await ctx.db.query("childDeviceRevocationProofs")
+          .withIndex("by_credential_id", (q) => q.eq("credentialId", credential._id)).unique();
+        if (revocationProof === null) {
+          await ctx.db.insert("childDeviceRevocationProofs", {
+            credentialId: credential._id,
+            publicKeySpki: credential.publicKeySpki,
+            revokedAt: credential.revokedAt ?? Date.now(),
+          });
+        }
         const challenges = await ctx.db.query("childDeviceTokenChallenges")
           .withIndex("by_credential_id_and_status", (q) => q.eq("credentialId", credential._id)).take(BATCH);
         for (const challenge of challenges) await ctx.db.delete("childDeviceTokenChallenges", challenge._id);
+        if (challenges.length === BATCH) {
+          await ctx.scheduler.runAfter(0, internal.modules.deviceIdentity.lifecycle.purgeCredentialChallenges, {
+            credentialId: credential._id,
+          });
+        }
         await ctx.db.delete("childDeviceCredentials", credential._id);
       }
       const tokens = await ctx.db.query("fcmTokens")

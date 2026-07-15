@@ -31,6 +31,7 @@ interface GuardianEnrollmentClient {
   suspend fun createCode(childProfileId: String): GuardianEnrollmentResult<GuardianEnrollmentCode>
   suspend fun cancelCode(enrollmentCodeId: String): GuardianEnrollmentResult<Unit>
   suspend fun replaceChildDevice(childProfileId: String): GuardianEnrollmentResult<Unit>
+  suspend fun endSupervision(childProfileId: String): GuardianEnrollmentResult<Unit>
   fun observeSummary(childProfileId: String): kotlinx.coroutines.flow.Flow<GuardianEnrollmentResult<GuardianEnrollmentSummary>>
 }
 
@@ -51,4 +52,11 @@ sealed interface GuardianDeviceReplacementUiState {
   data object Replacing : GuardianDeviceReplacementUiState
   data object Replaced : GuardianDeviceReplacementUiState
   data class Failure(val error: GuardianEnrollmentError) : GuardianDeviceReplacementUiState
+}
+
+sealed interface GuardianEndSupervisionUiState {
+  data object Confirming : GuardianEndSupervisionUiState
+  data object Ending : GuardianEndSupervisionUiState
+  data object Ended : GuardianEndSupervisionUiState
+  data class Failure(val error: GuardianEnrollmentError) : GuardianEndSupervisionUiState
 }

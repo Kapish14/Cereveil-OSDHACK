@@ -18,4 +18,15 @@ class GuardianStartupContentTest {
     )
     assertEquals("Connection problem", guardianStartupDisplayName(GuardianStartupRoute.RetryableError))
   }
+
+  @Test
+  fun deviceLimitOffersLogoutAndShowsProgressWhileEndingTheSession() {
+    assertEquals("Log out", guardianLogoutActionLabel(signOutInProgress = false))
+    assertEquals("Logging out…", guardianLogoutActionLabel(signOutInProgress = true))
+    assertEquals(null, guardianLogoutError(signOutFailed = false))
+    assertEquals(
+      "Cereveil could not log out. Check your connection and try again.",
+      guardianLogoutError(signOutFailed = true),
+    )
+  }
 }

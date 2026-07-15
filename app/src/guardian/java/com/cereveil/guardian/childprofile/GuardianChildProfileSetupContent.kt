@@ -20,9 +20,11 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -40,15 +42,19 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 import com.cereveil.guardian.policy.GuardianPolicyContent
+import com.cereveil.guardian.policy.GuardianPolicySection
 import com.cereveil.guardian.enrollment.GuardianDeviceReplacementAction
+import com.cereveil.guardian.enrollment.GuardianEndSupervisionAction
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.cereveil.guardian.ui.GuardianBottomBar
 import com.cereveil.guardian.ui.GuardianCard
+import com.cereveil.guardian.ui.GuardianDarkModeToggle
 import com.cereveil.guardian.ui.GuardianGreen
 import com.cereveil.guardian.ui.GuardianGreenContainer
 import com.cereveil.guardian.ui.GuardianHeader
@@ -56,11 +62,15 @@ import com.cereveil.guardian.ui.GuardianNotice
 import com.cereveil.guardian.ui.GuardianOrange
 import com.cereveil.guardian.ui.GuardianOrangeContainer
 import com.cereveil.guardian.ui.GuardianPrimaryButton
+import com.cereveil.guardian.ui.GuardianProtectionCard
 import com.cereveil.guardian.ui.GuardianScreen
 import com.cereveil.guardian.ui.GuardianSecondaryButton
 import com.cereveil.guardian.ui.GuardianTab
 import com.cereveil.guardian.ui.GuardianTitle
-import com.cereveil.guardian.ui.StatusPill
+import com.cereveil.guardianLogoutActionLabel
+import com.cereveil.guardianLogoutError
+
+private enum class GuardianHomeDetail { ScamText, NsfwScreen, AppBlocking, RemoteAudio }
 
 @Composable
 fun GuardianChildProfileSetupContent(
@@ -68,6 +78,10 @@ fun GuardianChildProfileSetupContent(
   authSessionKey: String?,
   viewModel: GuardianChildProfileSetupViewModel = viewModel(),
   onSetUpChildDevice: (ChildProfileSummary) -> Unit = {},
+  onSupervisionEnded: () -> Unit = {},
+  onSignOut: () -> Unit = {},
+  signOutInProgress: Boolean = false,
+  signOutFailed: Boolean = false,
   refreshKey: Int = 0,
   initialDetailProfileId: String? = null,
   initialOpenSafetyFeed: Boolean = false,
@@ -86,6 +100,10 @@ fun GuardianChildProfileSetupContent(
     onSubmit = viewModel::submit,
     onRetry = viewModel::load,
     onSetUpChildDevice = onSetUpChildDevice,
+    onSupervisionEnded = onSupervisionEnded,
+    onSignOut = onSignOut,
+    signOutInProgress = signOutInProgress,
+    signOutFailed = signOutFailed,
     modifier = modifier,
     initialDetailProfileId = initialDetailProfileId,
     initialOpenSafetyFeed = initialOpenSafetyFeed,
@@ -98,6 +116,10 @@ internal fun GuardianChildProfileSetupContent(
   onSubmit: (String, String, String) -> Unit,
   onRetry: () -> Unit,
   onSetUpChildDevice: (ChildProfileSummary) -> Unit,
+  onSupervisionEnded: () -> Unit = {},
+  onSignOut: () -> Unit = {},
+  signOutInProgress: Boolean = false,
+  signOutFailed: Boolean = false,
   modifier: Modifier = Modifier,
   initialDetailProfileId: String? = null,
   initialOpenSafetyFeed: Boolean = false,
@@ -113,6 +135,13 @@ internal fun GuardianChildProfileSetupContent(
       openSafetyAlerts = initialOpenSafetyFeed && initialDetailProfileId == detailProfile.childProfileId,
       onBack = { detailProfileId = null },
       onSetUpChildDevice = onSetUpChildDevice,
+      onSupervisionEnded = {
+        detailProfileId = null
+        onSupervisionEnded()
+      },
+      onSignOut = onSignOut,
+      signOutInProgress = signOutInProgress,
+      signOutFailed = signOutFailed,
     )
     return
   }
@@ -150,6 +179,9 @@ internal fun GuardianChildProfileSetupContent(
           )
         }
       }
+    }
+    if (guardianTopLevelLogoutVisible(state)) {
+      GuardianLogoutAction(onSignOut, signOutInProgress, signOutFailed)
     }
   }
 }
@@ -197,6 +229,7 @@ private fun ChildProfileForm(
     )
   }
   GuardianNotice("Cereveil only needs month and year. Exact birth dates are never collected.")
+  GuardianNotice(InitialPolicyDefaultsDisclosure)
   Text("For children ages 8–15.", style = MaterialTheme.typography.labelSmall)
   GuardianPrimaryButton(
     text = "Create child profile",
@@ -251,19 +284,52 @@ private fun GuardianDashboard(
   openSafetyAlerts: Boolean,
   onBack: () -> Unit,
   onSetUpChildDevice: (ChildProfileSummary) -> Unit,
+  onSupervisionEnded: () -> Unit,
+  onSignOut: () -> Unit,
+  signOutInProgress: Boolean,
+  signOutFailed: Boolean,
 ) {
   var selectedTab by rememberSaveable(profile.childProfileId) { mutableStateOf(GuardianTab.Home) }
+  var homeDetail by rememberSaveable(profile.childProfileId) { mutableStateOf<GuardianHomeDetail?>(null) }
+  var homeScrollPosition by rememberSaveable(profile.childProfileId) { mutableStateOf(0) }
+  var restoreHomeScroll by remember { mutableStateOf(false) }
+  val dashboardScrollState = rememberScrollState()
+  val openDetail: (GuardianHomeDetail) -> Unit = {
+    homeScrollPosition = dashboardScrollState.value
+    homeDetail = it
+  }
+  val closeDetail: () -> Unit = {
+    restoreHomeScroll = true
+    homeDetail = null
+  }
+  LaunchedEffect(selectedTab, homeDetail) {
+    if (selectedTab == GuardianTab.Home && homeDetail == null && restoreHomeScroll) {
+      dashboardScrollState.scrollTo(homeScrollPosition)
+      restoreHomeScroll = false
+    } else {
+      dashboardScrollState.scrollTo(0)
+    }
+  }
   BackHandler {
-    if (selectedTab == GuardianTab.Home) onBack() else selectedTab = GuardianTab.Home
+    when {
+      homeDetail != null -> closeDetail()
+      selectedTab == GuardianTab.Home -> onBack()
+      else -> selectedTab = GuardianTab.Home
+    }
   }
   Scaffold(
     modifier = modifier.fillMaxSize(),
     containerColor = MaterialTheme.colorScheme.background,
-    bottomBar = { GuardianBottomBar(selectedTab, onSelect = { selectedTab = it }) },
+    bottomBar = { GuardianBottomBar(selectedTab, onSelect = { selectedTab = it; homeDetail = null }) },
   ) { innerPadding ->
     Column(
       Modifier.fillMaxSize()
-        .verticalScroll(rememberScrollState())
+        .guardianTabSwipe(selectedTab, enabled = homeDetail == null) {
+          selectedTab = it
+          homeDetail = null
+          restoreHomeScroll = false
+        }
+        .verticalScroll(dashboardScrollState)
         .padding(innerPadding)
         .padding(horizontal = 20.dp, vertical = 12.dp),
       verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -280,46 +346,54 @@ private fun GuardianDashboard(
           Text(profile.displayName, style = MaterialTheme.typography.titleLarge)
           Text("Guardian dashboard", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        val online = profile.connectivityStatus == GuardianConnectivityStatus.Online
-        val fullyProtected = profile.protectionStatus == GuardianProtectionStatus.FullyProtected
-        val safe = online && fullyProtected
-        val statusText = when {
-          safe -> "Safe"
-          online -> "Attention"
-          profile.connectivityStatus == GuardianConnectivityStatus.Pending -> "Checking"
-          profile.connectivityStatus == GuardianConnectivityStatus.Offline -> "Offline"
-          else -> "Not enrolled"
-        }
-        StatusPill(
-          statusText,
-          if (safe) GuardianGreen else GuardianOrange,
-          if (safe) GuardianGreenContainer else GuardianOrangeContainer,
-          icon = if (safe) Icons.Default.CheckCircle else Icons.Default.Warning,
-        )
       }
 
       when (selectedTab) {
         GuardianTab.Home -> {
-          GuardianCard {
-            Text(protectionDisplayName(profile.protectionStatus, profile.connectivityStatus), style = MaterialTheme.typography.titleMedium)
-            RelativeHeartbeatTime(profile)
-            if (profile.unavailableCapabilities.isNotEmpty()) {
-              Text("Needs attention: ${profile.unavailableCapabilities.joinToString()}", color = MaterialTheme.colorScheme.error)
+          when (homeDetail) {
+            null -> {
+              GuardianProtectionCard(
+                title = if (profile.protectionStatus == GuardianProtectionStatus.FullyProtected) "Protection active"
+                  else protectionDisplayName(profile.protectionStatus, profile.connectivityStatus),
+                supportingText = relativeHeartbeatLabel(profile),
+                attentionText = profile.unavailableCapabilities.takeIf { it.isNotEmpty() }
+                  ?.joinToString(prefix = "Needs attention: "),
+              )
+              GuardianLiveFeaturesContent(
+                profile.childProfileId,
+                section = GuardianFeatureSection.Home,
+                openSafetyAlerts = openSafetyAlerts,
+                onOpenScam = { openDetail(GuardianHomeDetail.ScamText) },
+                onOpenNsfw = { openDetail(GuardianHomeDetail.NsfwScreen) },
+                onOpenAppBlocking = { openDetail(GuardianHomeDetail.AppBlocking) },
+                onOpenRemoteAudio = { openDetail(GuardianHomeDetail.RemoteAudio) },
+              )
+            }
+            GuardianHomeDetail.ScamText -> {
+              FeatureDetailHeader("Scam Text Detection", closeDetail)
+              GuardianPolicyContent(profile.childProfileId, section = GuardianPolicySection.ScamText)
+            }
+            GuardianHomeDetail.NsfwScreen -> {
+              FeatureDetailHeader("NSFW Screen Detection", closeDetail)
+              GuardianPolicyContent(profile.childProfileId, section = GuardianPolicySection.NsfwScreen)
+            }
+            GuardianHomeDetail.AppBlocking -> {
+              FeatureDetailHeader("App Blocking", closeDetail)
+              GuardianPolicyContent(profile.childProfileId, section = GuardianPolicySection.AppBlocking)
+              GuardianLiveFeaturesContent(profile.childProfileId, GuardianFeatureSection.AppBlocking)
+            }
+            GuardianHomeDetail.RemoteAudio -> {
+              FeatureDetailHeader("One-Way Audio", closeDetail)
+              GuardianLiveFeaturesContent(profile.childProfileId, GuardianFeatureSection.RemoteAudio)
             }
           }
-          GuardianLiveFeaturesContent(
-            profile.childProfileId,
-            section = GuardianFeatureSection.Home,
-            openSafetyAlerts = openSafetyAlerts,
-            onOpenSettings = { selectedTab = GuardianTab.Settings },
-          )
         }
         GuardianTab.Location -> GuardianLiveFeaturesContent(profile.childProfileId, GuardianFeatureSection.Location)
         GuardianTab.Activity -> GuardianLiveFeaturesContent(profile.childProfileId, GuardianFeatureSection.Activity)
         GuardianTab.Settings -> {
           GuardianTitle("Supervision settings", "Changes are sent to ${profile.displayName}’s enrolled device.")
-          GuardianLiveFeaturesContent(profile.childProfileId, GuardianFeatureSection.Settings)
-          GuardianPolicyContent(profile.childProfileId)
+          GuardianDarkModeToggle()
+          GuardianPolicyContent(profile.childProfileId, section = GuardianPolicySection.Settings)
           GuardianDeviceReplacementAction(
             childProfileId = profile.childProfileId,
             childDisplayName = profile.displayName,
@@ -335,6 +409,12 @@ private fun GuardianDashboard(
               )
             },
           )
+          GuardianEndSupervisionAction(
+            childProfileId = profile.childProfileId,
+            childDisplayName = profile.displayName,
+            onSupervisionEnded = onSupervisionEnded,
+          )
+          GuardianLogoutAction(onSignOut, signOutInProgress, signOutFailed)
           GuardianSecondaryButton("Back to children", onBack)
         }
       }
@@ -342,9 +422,56 @@ private fun GuardianDashboard(
   }
 }
 
+private fun Modifier.guardianTabSwipe(
+  selected: GuardianTab,
+  enabled: Boolean,
+  onSelect: (GuardianTab) -> Unit,
+): Modifier = pointerInput(selected, enabled) {
+  if (!enabled) return@pointerInput
+  var distance = 0f
+  detectHorizontalDragGestures(
+    onDragStart = { distance = 0f },
+    onHorizontalDrag = { change, amount ->
+      distance += amount
+      change.consume()
+    },
+    onDragEnd = {
+      if (kotlin.math.abs(distance) < 90f) return@detectHorizontalDragGestures
+      val tabs = GuardianTab.entries
+      val current = tabs.indexOf(selected)
+      val target = if (distance < 0) current + 1 else current - 1
+      tabs.getOrNull(target)?.let(onSelect)
+    },
+  )
+}
+
 @Composable
-private fun RelativeHeartbeatTime(profile: ChildProfileSummary) {
-  val heartbeatAt = profile.lastHeartbeatAt ?: return
+internal fun GuardianLogoutAction(
+  onSignOut: () -> Unit,
+  signOutInProgress: Boolean,
+  signOutFailed: Boolean,
+) {
+  guardianLogoutError(signOutFailed)?.let { GuardianNotice(it) }
+  GuardianSecondaryButton(
+    text = guardianLogoutActionLabel(signOutInProgress),
+    onClick = onSignOut,
+    enabled = !signOutInProgress,
+  )
+}
+
+@Composable
+private fun FeatureDetailHeader(title: String, onBack: () -> Unit) {
+  Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+    IconButton(onClick = onBack) {
+      Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back to dashboard")
+    }
+    Text(title, style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f))
+  }
+}
+
+@Composable
+private fun relativeHeartbeatLabel(profile: ChildProfileSummary): String {
+  val heartbeatAt = profile.lastHeartbeatAt ?: return "Waiting for the first device check"
   val serverOffset = (profile.serverNow ?: System.currentTimeMillis()) - System.currentTimeMillis()
   var currentTime by remember(profile.childProfileId, heartbeatAt) { mutableLongStateOf(System.currentTimeMillis()) }
   LaunchedEffect(profile.childProfileId, heartbeatAt) {
@@ -354,11 +481,11 @@ private fun RelativeHeartbeatTime(profile: ChildProfileSummary) {
     }
   }
   val ageMinutes = (currentTime + serverOffset - heartbeatAt).coerceAtLeast(0) / 60_000
-  Text(if (profile.connectivityStatus == GuardianConnectivityStatus.Offline) {
+  return if (profile.connectivityStatus == GuardianConnectivityStatus.Offline) {
     "Last seen $ageMinutes min ago"
   } else {
     "Last checked $ageMinutes min ago"
-  })
+  }
 }
 
 @Composable
@@ -379,6 +506,9 @@ internal fun childProfileEnrollmentDisplayName(enrollmentStatus: ChildProfileEnr
     ChildProfileEnrollmentStatus.Unenrolled -> "Device setup needed"
     ChildProfileEnrollmentStatus.Active -> "Device enrolled"
   }
+
+internal fun guardianTopLevelLogoutVisible(state: GuardianChildProfileSetupState): Boolean =
+  state != GuardianChildProfileSetupState.Loading
 
 internal fun connectivityDisplayName(status: GuardianConnectivityStatus) = when (status) {
   GuardianConnectivityStatus.NotApplicable -> "Device not enrolled"
@@ -404,3 +534,5 @@ internal fun childProfileErrorDisplayName(error: GuardianChildProfileError): Str
     GuardianChildProfileError.AgeOutOfRange -> "Child age must be 8 to 15"
     GuardianChildProfileError.Retryable -> "Connection problem"
   }
+internal const val InitialPolicyDefaultsDisclosure =
+  "After device setup, Location Sharing and Screen Time will be on by default. You can turn either off in Settings."

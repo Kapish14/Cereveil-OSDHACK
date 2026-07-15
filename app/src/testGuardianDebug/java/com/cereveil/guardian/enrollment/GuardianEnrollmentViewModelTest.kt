@@ -86,6 +86,20 @@ class GuardianEnrollmentViewModelTest {
     assertEquals(GuardianDeviceReplacementUiState.Replaced, model.state.value)
     assertEquals(listOf("child-1"), client.replacementRequests)
   }
+
+  @Test
+  fun endSupervisionPermanentlyEndsTheSelectedChildProfile() = runTest(dispatcher) {
+    val client = FakeGuardianEnrollmentClient()
+    val model = GuardianEndSupervisionViewModel("child-1", client)
+
+    assertEquals(GuardianEndSupervisionUiState.Confirming, model.state.value)
+
+    model.endSupervision()
+    advanceUntilIdle()
+
+    assertEquals(GuardianEndSupervisionUiState.Ended, model.state.value)
+    assertEquals(listOf("child-1"), client.endSupervisionRequests)
+  }
 }
 
 private class FakeGuardianEnrollmentClient : GuardianEnrollmentClient {
@@ -108,11 +122,16 @@ private class FakeGuardianEnrollmentClient : GuardianEnrollmentClient {
     )
   }
   val replacementRequests = mutableListOf<String>()
+  val endSupervisionRequests = mutableListOf<String>()
 
   override suspend fun createCode(childProfileId: String) = GuardianEnrollmentResult.Success(code)
   override suspend fun cancelCode(enrollmentCodeId: String) = GuardianEnrollmentResult.Success(Unit)
   override suspend fun replaceChildDevice(childProfileId: String): GuardianEnrollmentResult<Unit> {
     replacementRequests += childProfileId
+    return GuardianEnrollmentResult.Success(Unit)
+  }
+  override suspend fun endSupervision(childProfileId: String): GuardianEnrollmentResult<Unit> {
+    endSupervisionRequests += childProfileId
     return GuardianEnrollmentResult.Success(Unit)
   }
   override fun observeSummary(childProfileId: String): Flow<GuardianEnrollmentResult<GuardianEnrollmentSummary>> = summaries

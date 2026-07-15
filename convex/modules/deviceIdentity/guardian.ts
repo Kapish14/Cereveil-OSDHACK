@@ -148,7 +148,10 @@ export const endSupervision = guardianMutation({
   operation: "supervision.end",
   args: { childProfileId: v.id("childProfiles") },
   handler: async (ctx, actor, args) => {
-    const profile = await requireGuardianForChildProfile(ctx, actor, args.childProfileId);
+    const profile = await ctx.db.get("childProfiles", args.childProfileId);
+    if (profile === null) return { ended: true };
+    if (profile.householdId !== actor.householdId) throwAppError("UNAUTHENTICATED");
+    if (profile.status === "deleting") return { ended: true };
     const serverNow = now();
     await ctx.db.patch("childProfiles", profile._id, { status: "deleting", updatedAt: serverNow });
     const enrollment = await ctx.db.query("activeEnrollments")

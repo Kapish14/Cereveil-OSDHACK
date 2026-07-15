@@ -83,3 +83,27 @@ class GuardianDeviceReplacementViewModel(
     mutableState.value = GuardianDeviceReplacementUiState.Confirming
   }
 }
+
+class GuardianEndSupervisionViewModel(
+  private val childProfileId: String,
+  private val client: GuardianEnrollmentClient,
+) : ViewModel() {
+  private val mutableState =
+    MutableStateFlow<GuardianEndSupervisionUiState>(GuardianEndSupervisionUiState.Confirming)
+  val state: StateFlow<GuardianEndSupervisionUiState> = mutableState.asStateFlow()
+
+  fun endSupervision() {
+    if (mutableState.value == GuardianEndSupervisionUiState.Ending) return
+    viewModelScope.launch {
+      mutableState.value = GuardianEndSupervisionUiState.Ending
+      mutableState.value = when (val result = client.endSupervision(childProfileId)) {
+        is GuardianEnrollmentResult.Success -> GuardianEndSupervisionUiState.Ended
+        is GuardianEnrollmentResult.Failure -> GuardianEndSupervisionUiState.Failure(result.error)
+      }
+    }
+  }
+
+  fun retry() {
+    mutableState.value = GuardianEndSupervisionUiState.Confirming
+  }
+}

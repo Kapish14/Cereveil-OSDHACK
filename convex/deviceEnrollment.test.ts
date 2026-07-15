@@ -528,8 +528,8 @@ describe("Enrolled Child Device APIs", () => {
       appBlocking: { enabled: false, rules: [] },
       safeBrowsing: { enabled: false, safeSearchEnabled: false },
       activeScreenSafety: { enabled: false },
-      locationSharing: { enabled: false },
-      screenTime: { enabled: false },
+      locationSharing: { enabled: true },
+      screenTime: { enabled: true },
     });
 
     const ackResponse = await childRequest(
@@ -597,12 +597,12 @@ describe("Enrolled Child Device APIs", () => {
       childProfileId: enrolled.child.childProfileId,
       expectedCurrentVersion: 1,
       operationId: "018f-policy-save-operation-0001",
-      enabled: true,
+      enabled: false,
     };
     const changed = await enrolled.t.withIdentity(identity).mutation(updateScreenTimeSummaries, args);
     expect(changed).toMatchObject({
-      desiredPolicy: { version: 2, schemaVersion: 2, screenTime: { enabled: true } },
-      appliedPolicy: { version: 1, screenTime: { enabled: false } },
+      desiredPolicy: { version: 2, schemaVersion: 2, screenTime: { enabled: false } },
+      appliedPolicy: { version: 1, screenTime: { enabled: true } },
       applicationStatus: "pending",
     });
     const replay = await enrolled.t.withIdentity(identity).mutation(updateScreenTimeSummaries, args);
@@ -617,7 +617,7 @@ describe("Enrolled Child Device APIs", () => {
       expect.objectContaining({ policyVersion: 2 }),
     ]);
     const fetched = await childRequest(enrolled.t, "/child/policy", enrolled.body.accessJwt);
-    expect(await fetched.json()).toMatchObject({ version: 2, screenTime: { enabled: true } });
+    expect(await fetched.json()).toMatchObject({ version: 2, screenTime: { enabled: false } });
     await childRequest(enrolled.t, "/child/policy/acknowledge", enrolled.body.accessJwt, {
       appliedPolicyVersion: 2,
     });
@@ -662,17 +662,17 @@ describe("Enrolled Child Device APIs", () => {
     await enrolled.t.withIdentity(identity).mutation(updateScreenTimeSummaries, {
       ...common,
       operationId: "018f-policy-save-operation-0002",
-      enabled: true,
+      enabled: false,
     });
     await expectAppError(enrolled.t.withIdentity(identity).mutation(updateScreenTimeSummaries, {
       ...common,
       operationId: "018f-policy-save-operation-0003",
-      enabled: false,
+      enabled: true,
     }), "POLICY_CONFLICT");
     await expectAppError(enrolled.t.withIdentity(identity).mutation(updateScreenTimeSummaries, {
       ...common,
       operationId: "018f-policy-save-operation-0002",
-      enabled: false,
+      enabled: true,
     }), "POLICY_OPERATION_REUSED");
   });
 
@@ -738,7 +738,7 @@ describe("Enrolled Child Device APIs", () => {
       childProfileId: enrolled.child.childProfileId,
       expectedCurrentVersion: 1,
       operationId: "018f-policy-permanent-failure-1",
-      enabled: true,
+      enabled: false,
     });
     const commandsResponse = await childRequest(enrolled.t, "/child/commands", enrolled.body.accessJwt, { cursor: null });
     const commands = (await commandsResponse.json()).commands as Array<{ commandId: string; policyVersion: number }>;
@@ -855,13 +855,41 @@ describe("Enrolled Child Device APIs", () => {
 
   test("refreshes through a one-use credential-bound challenge", async () => {
     const enrolled = await enrolledChild();
-    const challengeResponse = await enrolled.t.fetch("/device-identity/token/challenge", {
+    const unsignedChallenge = await enrolled.t.fetch("/device-identity/token/challenge", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ credentialId: enrolled.body.credentialId }),
     });
+    expect(unsignedChallenge.status).toBe(401);
+    const replayNonce = crypto.randomUUID();
+    const replayIssuedAt = Date.now();
+    expect((await requestTokenChallenge(
+      enrolled.t,
+      enrolled.body.credentialId,
+      enrolled.proof.keyPair,
+      replayNonce,
+      replayIssuedAt,
+    )).status).toBe(200);
+    expect((await requestTokenChallenge(
+      enrolled.t,
+      enrolled.body.credentialId,
+      enrolled.proof.keyPair,
+      replayNonce,
+      replayIssuedAt,
+    )).status).toBe(401);
+    const challengeResponse = await requestTokenChallenge(
+      enrolled.t,
+      enrolled.body.credentialId,
+      enrolled.proof.keyPair,
+    );
     expect(challengeResponse.status).toBe(200);
     const challengeBody = await challengeResponse.json();
+    // A second authenticated request must not invalidate an already-issued challenge.
+    expect((await requestTokenChallenge(
+      enrolled.t,
+      enrolled.body.credentialId,
+      enrolled.proof.keyPair,
+    )).status).toBe(200);
     const signature = await crypto.subtle.sign(
       { name: "ECDSA", hash: "SHA-256" },
       enrolled.proof.keyPair.privateKey,
@@ -920,15 +948,31 @@ describe("Enrolled Child Device APIs", () => {
       expect(
         (await childRequest(enrolled.t, "/child/policy", enrolled.body.accessJwt)).status,
       ).toBe(401);
-      expect(
-        (
-          await enrolled.t.fetch("/device-identity/token/challenge", {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ credentialId: enrolled.body.credentialId }),
-          })
-        ).status,
-      ).toBe(401);
+      const challengeResponse = await requestTokenChallenge(
+        enrolled.t,
+        enrolled.body.credentialId,
+        enrolled.proof.keyPair,
+      );
+      expect(challengeResponse.status).toBe(200);
+      const challengeBody = await challengeResponse.json();
+      const signature = await crypto.subtle.sign(
+        { name: "ECDSA", hash: "SHA-256" },
+        enrolled.proof.keyPair.privateKey,
+        new TextEncoder().encode(
+          `cereveil-child-token-refresh-v1\n${enrolled.body.credentialId}\n${challengeBody.challenge}`,
+        ),
+      );
+      const exchange = await enrolled.t.fetch("/device-identity/token/exchange", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          credentialId: enrolled.body.credentialId,
+          challenge: challengeBody.challenge,
+          proof: base64UrlEncode(new Uint8Array(signature)),
+        }),
+      });
+      expect(exchange.status).toBe(410);
+      expect(await exchange.json()).toEqual({ code: "CHILD_DEVICE_REVOKED" });
     }
   });
 });
@@ -1213,8 +1257,8 @@ describe("Supervision Policy schema v2", () => {
       version: 1,
       schemaVersion: 2,
       appBlocking: { enabled: false, rules: [] },
-      locationSharing: { enabled: false },
-      screenTime: { enabled: false },
+      locationSharing: { enabled: true },
+      screenTime: { enabled: true },
     });
   });
 
@@ -1296,23 +1340,17 @@ describe("Latest-only feature convergence", () => {
       guardianInstallationId: bootstrapArgs.guardianInstallationId,
       childProfileId: enrolled.child.childProfileId,
     };
-    await enrolled.t.withIdentity(identity).mutation(updateLocationSharing, {
-      ...guardianArgs, expectedCurrentVersion: 1, operationId: "enable-location-0001", enabled: true,
-    });
-    await enrolled.t.withIdentity(identity).mutation(updateScreenTime, {
-      ...guardianArgs, expectedCurrentVersion: 2, operationId: "enable-screen-time-0001", enabled: true,
-    });
     const updateRules = makeFunctionReference<"mutation">(
       "modules/policies/guardian:updateAppBlockingRules",
     ) as FunctionReference<"mutation", "public", any, any>;
     await enrolled.t.withIdentity(identity).mutation(updateRules, {
       ...guardianArgs,
-      expectedCurrentVersion: 3,
+      expectedCurrentVersion: 1,
       operationId: "enable-block-reader-0001",
       rules: [{ packageName: "com.example.reader", manualBlocked: true, schedules: [] }],
     });
     await childRequest(enrolled.t, "/child/policy/acknowledge", enrolled.body.accessJwt, {
-      appliedPolicyVersion: 4,
+      appliedPolicyVersion: 2,
     });
     await childRequest(enrolled.t, "/child/heartbeat", enrolled.body.accessJwt, {
       supportedPolicySchemaVersion: 2,
@@ -1341,7 +1379,7 @@ describe("Latest-only feature convergence", () => {
     const location = await enrolled.t.withIdentity(identity).query(getLatestLocation, guardianArgs);
     expect(location.location).toMatchObject({ latitude: 12.9, longitude: 77.6, capturedAt });
     await enrolled.t.withIdentity(identity).mutation(updateLocationSharing, {
-      ...guardianArgs, expectedCurrentVersion: 4, operationId: "disable-location-0001", enabled: false,
+      ...guardianArgs, expectedCurrentVersion: 2, operationId: "disable-location-0001", enabled: false,
     });
     expect((await childRequest(enrolled.t, "/child/location", enrolled.body.accessJwt, {
       latitude: 13, longitude: 78, accuracyMeters: 10, capturedAt: capturedAt + 1,
@@ -1386,7 +1424,7 @@ describe("Latest-only feature convergence", () => {
     ]);
 
     expect((await childRequest(enrolled.t, "/child/access-requests", enrolled.body.accessJwt, {
-      packageName: "com.example.reader", appliedPolicyVersion: 4, blockKind: "manual",
+      packageName: "com.example.reader", appliedPolicyVersion: 2, blockKind: "manual",
     })).status).toBe(200);
     const pending = await enrolled.t.withIdentity(identity).query(listPendingAccessRequests, guardianArgs);
     expect(pending).toHaveLength(1);
@@ -1457,6 +1495,33 @@ describe("Latest-only feature convergence", () => {
     await childRequest(enrolled.t, "/child/app-catalog/generations/complete", enrolled.body.accessJwt, { generationId });
 
     expect(await enrolled.t.withIdentity(identity).mutation(replaceChildDevice, guardianArgs)).toEqual({ replaced: true });
+
+    const challengeResponse = await requestTokenChallenge(
+      enrolled.t,
+      enrolled.body.credentialId,
+      enrolled.proof.keyPair,
+    );
+    expect(challengeResponse.status).toBe(200);
+    const challengeBody = await challengeResponse.json();
+    const signature = await crypto.subtle.sign(
+      { name: "ECDSA", hash: "SHA-256" },
+      enrolled.proof.keyPair.privateKey,
+      new TextEncoder().encode(
+        `cereveil-child-token-refresh-v1\n${enrolled.body.credentialId}\n${challengeBody.challenge}`,
+      ),
+    );
+    const revokedExchange = await enrolled.t.fetch("/device-identity/token/exchange", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        credentialId: enrolled.body.credentialId,
+        challenge: challengeBody.challenge,
+        proof: base64UrlEncode(new Uint8Array(signature)),
+      }),
+    });
+    expect(revokedExchange.status).toBe(410);
+    expect(await revokedExchange.json()).toEqual({ code: "CHILD_DEVICE_REVOKED" });
+
     await enrolled.t.finishAllScheduledFunctions(() => vi.runAllTimers());
     const afterReplace = await enrolled.t.run(async (ctx: MutationCtx) => ({
       generations: await ctx.db.query("appCatalogGenerations").collect(),
@@ -1469,15 +1534,156 @@ describe("Latest-only feature convergence", () => {
     expect(afterReplace.enrollment?.status).toBe("revoked");
     expect(afterReplace.policies).toHaveLength(1);
 
+    await enrolled.t.run(async (ctx: MutationCtx) => {
+      const enrollment = await ctx.db.get("activeEnrollments", enrolled.body.activeEnrollmentId);
+      if (enrollment === null) throw new Error("Expected retained revoked enrollment");
+      const guardianDevice = (await ctx.db.query("guardianDevices")
+        .withIndex("by_status", (q) => q.eq("status", "active")).take(1)).at(0);
+      if (guardianDevice === undefined) throw new Error("Expected active Guardian Device");
+      const credential = (await ctx.db.query("childDeviceCredentials")
+        .withIndex("by_active_enrollment_id_and_status", (q) => q.eq("activeEnrollmentId", enrollment._id)).take(1)).at(0);
+      if (credential === undefined) throw new Error("Expected Child Device credential");
+      for (let index = 0; index < 51; index += 1) {
+        await ctx.db.insert("childDeviceTokenChallenges", {
+          credentialId: credential._id,
+          challengeHash: `end-supervision-challenge-${index}`,
+          status: "used",
+          expiresAt: 10_000,
+          createdAt: 1,
+          usedAt: 2,
+        });
+      }
+      const fcmTokenId = await ctx.db.insert("fcmTokens", {
+        ownerKind: "childDevice",
+        ownerId: enrollment.childDeviceId,
+        householdId: enrollment.householdId,
+        childProfileId: enrollment.childProfileId,
+        childDeviceId: enrollment.childDeviceId,
+        activeEnrollmentId: enrollment._id,
+        tokenHash: "end-supervision-delivery-token",
+        encryptedToken: "end-supervision-delivery-ciphertext",
+        platform: "android",
+        environment: "dev",
+        status: "revoked",
+        registeredAt: 1,
+        lastSeenAt: 1,
+        invalidatedAt: 2,
+      });
+      const commandId = await ctx.db.insert("childDeviceCommands", {
+        householdId: enrollment.householdId,
+        childProfileId: enrollment.childProfileId,
+        activeEnrollmentId: enrollment._id,
+        childDeviceId: enrollment.childDeviceId,
+        type: "refresh_location",
+        intentKey: "end-supervision-cleanup",
+        status: "pending",
+        createdAt: 1,
+        updatedAt: 1,
+        expiresAt: 10_000,
+      });
+      const noticeId = await ctx.db.insert("guardianNotices", {
+        householdId: enrollment.householdId,
+        childProfileId: enrollment.childProfileId,
+        activeEnrollmentId: enrollment._id,
+        type: "recovery",
+        episodeKey: "end-supervision-cleanup",
+        status: "active",
+        occurredAt: 1,
+        expiresAt: 10_000,
+      });
+      await ctx.db.insert("guardianNoticeReceipts", {
+        guardianNoticeId: noticeId,
+        guardianDeviceId: guardianDevice._id,
+        householdId: enrollment.householdId,
+        status: "pending",
+        createdAt: 1,
+        expiresAt: 10_000,
+      });
+      await ctx.db.insert("fcmDeliveryAttempts", {
+        recordKind: "childDeviceCommand",
+        recordId: commandId,
+        fcmTokenId,
+        attempt: 1,
+        outcome: "accepted",
+        attemptedAt: 1,
+        expiresAt: 10_000,
+      });
+      await ctx.db.insert("fcmDeliveryAttempts", {
+        recordKind: "guardianNotice",
+        recordId: noticeId,
+        fcmTokenId,
+        attempt: 1,
+        outcome: "accepted",
+        attemptedAt: 1,
+        expiresAt: 10_000,
+      });
+    });
+
+    expect(await enrolled.t.withIdentity(identity).mutation(endSupervision, guardianArgs)).toEqual({ ended: true });
     expect(await enrolled.t.withIdentity(identity).mutation(endSupervision, guardianArgs)).toEqual({ ended: true });
     await enrolled.t.finishAllScheduledFunctions(() => vi.runAllTimers());
+    expect(await enrolled.t.withIdentity(identity).mutation(endSupervision, guardianArgs)).toEqual({ ended: true });
     const afterEnd = await enrolled.t.run(async (ctx: MutationCtx) => ({
       profiles: await ctx.db.query("childProfiles").collect(),
       policies: await ctx.db.query("supervisionPolicies").collect(),
       devices: await ctx.db.query("childDevices").collect(),
       enrollments: await ctx.db.query("activeEnrollments").collect(),
+      challenges: await ctx.db.query("childDeviceTokenChallenges").collect(),
+      deliveryAttempts: await ctx.db.query("fcmDeliveryAttempts").collect(),
     }));
-    expect(afterEnd).toEqual({ profiles: [], policies: [], devices: [], enrollments: [] });
+    expect(afterEnd).toEqual({
+      profiles: [],
+      policies: [],
+      devices: [],
+      enrollments: [],
+      challenges: [],
+      deliveryAttempts: [],
+    });
+
+    const endedChallengeResponse = await requestTokenChallenge(
+      enrolled.t,
+      enrolled.body.credentialId,
+      enrolled.proof.keyPair,
+    );
+    expect(endedChallengeResponse.status).toBe(200);
+    const endedChallenge = await endedChallengeResponse.json();
+    const unrelatedKey = await enrollmentProof("unrelated-revocation-proof-key");
+    const unrelatedSignature = await crypto.subtle.sign(
+      { name: "ECDSA", hash: "SHA-256" },
+      unrelatedKey.keyPair.privateKey,
+      new TextEncoder().encode(
+        `cereveil-child-token-refresh-v1\n${enrolled.body.credentialId}\n${endedChallenge.challenge}`,
+      ),
+    );
+    const unauthenticatedExchange = await enrolled.t.fetch("/device-identity/token/exchange", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        credentialId: enrolled.body.credentialId,
+        challenge: endedChallenge.challenge,
+        proof: base64UrlEncode(new Uint8Array(unrelatedSignature)),
+      }),
+    });
+    expect(unauthenticatedExchange.status).toBe(401);
+
+    const endedSignature = await crypto.subtle.sign(
+      { name: "ECDSA", hash: "SHA-256" },
+      enrolled.proof.keyPair.privateKey,
+      new TextEncoder().encode(
+        `cereveil-child-token-refresh-v1\n${enrolled.body.credentialId}\n${endedChallenge.challenge}`,
+      ),
+    );
+    const endedExchange = await enrolled.t.fetch("/device-identity/token/exchange", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        credentialId: enrolled.body.credentialId,
+        challenge: endedChallenge.challenge,
+        proof: base64UrlEncode(new Uint8Array(endedSignature)),
+      }),
+    });
+    expect(endedExchange.status).toBe(410);
+    expect(await endedExchange.json()).toEqual({ code: "CHILD_DEVICE_REVOKED" });
   });
 });
 
@@ -1507,6 +1713,45 @@ async function childRequest(
       ...(body === undefined ? {} : { "content-type": "application/json" }),
     },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  });
+}
+
+async function requestTokenChallenge(
+  t: ReturnType<typeof backend>,
+  credentialId: string,
+  keyPair: CryptoKeyPair,
+  suppliedNonce?: string,
+  suppliedIssuedAt?: number,
+) {
+  let requestNonce = suppliedNonce;
+  let requestIssuedAt = suppliedIssuedAt;
+  if (requestNonce === undefined || requestIssuedAt === undefined) {
+    const issued = await t.fetch("/device-identity/token/challenge/request", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+    if (issued.status !== 200) return issued;
+    const body = await issued.json();
+    requestNonce = body.requestNonce;
+    requestIssuedAt = body.requestIssuedAt;
+  }
+  const signature = await crypto.subtle.sign(
+    { name: "ECDSA", hash: "SHA-256" },
+    keyPair.privateKey,
+    new TextEncoder().encode(
+      `cereveil-child-token-challenge-v1\n${credentialId}\n${requestNonce}\n${requestIssuedAt}`,
+    ),
+  );
+  return await t.fetch("/device-identity/token/challenge", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      credentialId,
+      requestNonce,
+      requestIssuedAt,
+      proof: base64UrlEncode(new Uint8Array(signature)),
+    }),
   });
 }
 
