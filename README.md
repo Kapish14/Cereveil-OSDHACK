@@ -2,7 +2,7 @@
 
 > Privacy-first family safety for Android, with scam and NSFW detection running on the Child Device.
 
-> **Install the demo:** Download the ready-to-install Guardian Mode and Child Mode APKs from the [latest GitHub Release](https://github.com/Kapish14/Cereveil/releases/latest). Install Guardian Mode first, then Child Mode.
+> **Install the demo:** Download the ready-to-install Guardian Mode and Child Mode APKs from the [latest GitHub Release](https://github.com/Kapish14/Cereveil-OSDHACK/releases/latest). Install Guardian Mode first, then Child Mode.
 
 Cereveil is one product delivered as two fixed-role Android builds from one codebase:
 
@@ -161,10 +161,10 @@ npm run convex:dev
 
 ### Download the ready-to-install APKs
 
-Download the current demo builds from the [latest GitHub Release](https://github.com/Kapish14/Cereveil/releases/latest):
+Download the current demo builds from the [latest GitHub Release](https://github.com/Kapish14/Cereveil-OSDHACK/releases/latest):
 
-- [Cereveil Guardian Mode build](https://github.com/Kapish14/Cereveil/releases/latest/download/Cereveil-Guardian.apk)
-- [Cereveil Child Mode build](https://github.com/Kapish14/Cereveil/releases/latest/download/Cereveil-Child.apk)
+- [Cereveil Guardian Mode build](https://github.com/Kapish14/Cereveil-OSDHACK/releases/latest/download/Cereveil-Guardian.apk)
+- [Cereveil Child Mode build](https://github.com/Kapish14/Cereveil-OSDHACK/releases/latest/download/Cereveil-Child.apk)
 
 These are debug-signed role builds for the project demo. They use the development package names above and keep the development-only Local AI experience available. They are not Play Store release artifacts.
 
