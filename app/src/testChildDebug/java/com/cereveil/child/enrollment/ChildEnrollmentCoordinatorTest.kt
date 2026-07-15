@@ -90,6 +90,18 @@ class ChildEnrollmentCoordinatorTest {
   }
 
   @Test
+  fun completionRegistersTheCurrentPushTokenEvenWhenNoneIsPending() = runTest {
+    val harness = Harness(onEnrollmentActivated = { harnessEvents ->
+      harnessEvents += "push:register-current"
+    })
+
+    val result = harness.coordinator.complete(EnrollmentQrPayload("AAAAAAAAAAAAAAAAAAAAAA"))
+
+    assertTrue(result is ChildEnrollmentUiState.Enrolled)
+    assertEquals("push:register-current", harness.events.last())
+  }
+
+  @Test
   fun tokenRefreshSignsBackendChallengeAndUpdatesOnlyBearerState() = runTest {
     val harness = Harness().apply { store.save(completionState()) }
     harness.events.clear()
@@ -313,7 +325,9 @@ class ChildEnrollmentCoordinatorTest {
     )
   }
 
-  private class Harness {
+  private class Harness(
+    onEnrollmentActivated: (MutableList<String>) -> Unit = {},
+  ) {
     val events = mutableListOf<String>()
     val store = FakeStore(events)
     val keyStore = FakeKeyStore(events)
@@ -330,6 +344,7 @@ class ChildEnrollmentCoordinatorTest {
       deviceLabel = "Pixel",
       appBuild = "1",
       capabilities = { ChildCapabilities(true, true, true, true, true, true) },
+      onEnrollmentActivated = { onEnrollmentActivated(events) },
     )
   }
 }

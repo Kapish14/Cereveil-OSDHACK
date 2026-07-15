@@ -13,6 +13,7 @@ class ChildEnrollmentCoordinator(
   private val deviceLabel: String?,
   private val appBuild: String,
   private val capabilities: () -> ChildCapabilities,
+  private val onEnrollmentActivated: () -> Unit = {},
 ) {
   private val tokenProvider = ChildDeviceTokenProvider(client, keyStore, stateStore)
 
@@ -35,7 +36,9 @@ class ChildEnrollmentCoordinator(
         val result = client.complete(payload.code, publicKey, proof, installationId, deviceLabel, appBuild)
       ) {
         is ChildEnrollmentResult.Failure -> ChildEnrollmentUiState.Failure(result.error)
-        is ChildEnrollmentResult.Success -> finishEnrollment(result.value, alias)
+        is ChildEnrollmentResult.Success -> finishEnrollment(result.value, alias).also {
+          runCatching(onEnrollmentActivated)
+        }
       }
     } catch (_: Exception) {
       ChildEnrollmentUiState.Failure(ChildEnrollmentError.EnrollmentFailed)

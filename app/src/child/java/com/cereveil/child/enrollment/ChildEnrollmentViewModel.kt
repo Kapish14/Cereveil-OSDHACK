@@ -26,6 +26,7 @@ class ChildEnrollmentViewModel(application: Application) : AndroidViewModel(appl
     deviceLabel = "${Build.MANUFACTURER} ${Build.MODEL}".trim(),
     appBuild = "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",
     capabilities = protectionCapabilities::current,
+    onEnrollmentActivated = pushTokenRegistrar::registerCurrent,
   )
 
   private var protectionSetupComplete = false

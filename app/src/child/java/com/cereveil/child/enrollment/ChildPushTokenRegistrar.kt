@@ -1,7 +1,9 @@
 package com.cereveil.child.enrollment
 
 import android.content.Context
+import android.util.Log
 import com.cereveil.BuildConfig
+import com.google.firebase.messaging.FirebaseMessaging
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
 import kotlinx.coroutines.CoroutineScope
@@ -11,6 +13,18 @@ import kotlinx.coroutines.launch
 
 class ChildPushTokenRegistrar(private val context: Context) {
   private val preferences = context.getSharedPreferences("child_push_delivery", Context.MODE_PRIVATE)
+  private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+  fun registerCurrent() {
+    FirebaseMessaging.getInstance().token
+      .addOnSuccessListener { token -> scope.launch { register(token) } }
+      .addOnFailureListener { error ->
+        Log.e(
+          "CereveilFCM",
+          "Current Child FCM token acquisition failed: ${error.javaClass.simpleName}: ${error.message}",
+        )
+      }
+  }
 
   suspend fun register(token: String) {
     preferences.edit().putString("pending_fcm_token", token).apply()
