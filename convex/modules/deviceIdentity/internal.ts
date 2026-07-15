@@ -415,23 +415,61 @@ async function createGuardianNotice(
   return noticeId;
 }
 
+export const getTokenChallengeAuthority = internalQuery({
+  args: { credentialId: v.id("childDeviceCredentials") },
+  handler: async (ctx, args) => {
+    const credential = await ctx.db.get("childDeviceCredentials", args.credentialId);
+    if (credential !== null) return { publicKeySpki: credential.publicKeySpki };
+    const revocationProof = await ctx.db.query("childDeviceRevocationProofs")
+      .withIndex("by_credential_id", (q) => q.eq("credentialId", args.credentialId)).unique();
+    return revocationProof === null ? null : { publicKeySpki: revocationProof.publicKeySpki };
+  },
+});
+
 export const createTokenChallenge = internalMutation({
   args: {
     credentialId: v.id("childDeviceCredentials"),
+    requestNonceHash: v.string(),
     challengeHash: v.string(),
     expiresAt: v.number(),
+    deleteAt: v.number(),
     serverNow: v.number(),
   },
   handler: async (ctx, args) => {
-    const activeCredential = await loadActiveCredential(ctx, args.credentialId);
-    if (activeCredential === null) return null;
-    await ctx.db.insert("childDeviceTokenChallenges", {
+    const credential = await ctx.db.get("childDeviceCredentials", args.credentialId);
+    if (credential === null) {
+      const revocationProof = await ctx.db.query("childDeviceRevocationProofs")
+        .withIndex("by_credential_id", (q) => q.eq("credentialId", args.credentialId)).unique();
+      if (revocationProof === null) return null;
+    }
+    const replay = await ctx.db.query("childDeviceTokenChallenges")
+      .withIndex("by_credential_id_and_request_nonce_hash", (q) =>
+        q.eq("credentialId", args.credentialId).eq("requestNonceHash", args.requestNonceHash),
+      ).unique();
+    if (replay !== null) return null;
+    const priorChallenges = await ctx.db.query("childDeviceTokenChallenges")
+      .withIndex("by_credential_id_and_status", (q) =>
+        q.eq("credentialId", args.credentialId).eq("status", "active"),
+      ).take(50);
+    const unexpiredChallenges = priorChallenges.filter((prior) => prior.expiresAt > args.serverNow);
+    for (const prior of priorChallenges) {
+      if (prior.expiresAt <= args.serverNow) await ctx.db.delete("childDeviceTokenChallenges", prior._id);
+    }
+    // Authenticated callers may keep a small concurrent set without invalidating one another.
+    if (priorChallenges.length === 50 || unexpiredChallenges.length >= 5) return null;
+    const challengeId = await ctx.db.insert("childDeviceTokenChallenges", {
       credentialId: args.credentialId,
+      requestNonceHash: args.requestNonceHash,
       challengeHash: args.challengeHash,
       status: "active",
       expiresAt: args.expiresAt,
       createdAt: args.serverNow,
     });
+    await ctx.scheduler.runAfter(
+      Math.max(0, args.deleteAt - args.serverNow),
+      internal.modules.deviceIdentity.lifecycle.expireTokenChallenge,
+      { challengeId },
+    );
     return true;
   },
 });
@@ -445,10 +483,11 @@ export const getTokenChallenge = internalQuery({
   handler: async (ctx, args) => {
     const challenge = await loadActiveChallenge(ctx, args);
     if (challenge === null) return null;
-    const activeCredential = await loadActiveCredential(ctx, args.credentialId);
-    return activeCredential === null
-      ? null
-      : { publicKeySpki: activeCredential.credential.publicKeySpki };
+    const credential = await ctx.db.get("childDeviceCredentials", args.credentialId);
+    if (credential !== null) return { publicKeySpki: credential.publicKeySpki };
+    const revocationProof = await ctx.db.query("childDeviceRevocationProofs")
+      .withIndex("by_credential_id", (q) => q.eq("credentialId", args.credentialId)).unique();
+    return revocationProof === null ? null : { publicKeySpki: revocationProof.publicKeySpki };
   },
 });
 
@@ -461,13 +500,25 @@ export const consumeTokenChallenge = internalMutation({
   handler: async (ctx, args) => {
     const challenge = await loadActiveChallenge(ctx, args);
     if (challenge === null) return null;
-    const activeCredential = await loadActiveCredential(ctx, args.credentialId);
-    if (activeCredential === null) return null;
+    const credential = await ctx.db.get("childDeviceCredentials", args.credentialId);
+    if (credential === null) {
+      const revocationProof = await ctx.db.query("childDeviceRevocationProofs")
+        .withIndex("by_credential_id", (q) => q.eq("credentialId", args.credentialId)).unique();
+      if (revocationProof === null) return null;
+      await ctx.db.patch("childDeviceTokenChallenges", challenge._id, {
+        status: "used",
+        usedAt: args.serverNow,
+      });
+      return { kind: "revoked" as const };
+    }
     await ctx.db.patch("childDeviceTokenChallenges", challenge._id, {
       status: "used",
       usedAt: args.serverNow,
     });
+    const activeCredential = await loadActiveCredential(ctx, args.credentialId);
+    if (activeCredential === null) return { kind: "revoked" as const };
     return {
+      kind: "active" as const,
       credentialId: activeCredential.credential._id,
       activeEnrollmentId: activeCredential.enrollment._id,
       childDeviceId: activeCredential.device._id,

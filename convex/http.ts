@@ -47,6 +47,17 @@ http.route({
 });
 
 const TOKEN_CHALLENGE_LIFETIME_MS = 2 * 60 * 1000;
+const TOKEN_CHALLENGE_REQUEST_LIFETIME_MS = 5 * 60 * 1000;
+const TOKEN_CHALLENGE_REQUEST_FUTURE_SKEW_MS = 30 * 1000;
+
+http.route({
+  path: "/device-identity/token/challenge/request",
+  method: "POST",
+  handler: httpAction(async () => jsonResponse({
+    requestNonce: randomBase64Url(32),
+    requestIssuedAt: Date.now(),
+  })),
+});
 
 http.route({
   path: "/device-identity/token/challenge",
@@ -54,17 +65,40 @@ http.route({
   handler: httpAction(async (ctx, request) => {
     const body = await parseJson(request);
     const credentialId = stringField(body, "credentialId");
-    if (credentialId === null) return unauthorizedResponse();
-    const typedCredentialId = credentialId as Id<"childDeviceCredentials">;
-    const challenge = randomBase64Url(32);
+    const requestNonce = stringField(body, "requestNonce");
+    const requestIssuedAt = numberField(body, "requestIssuedAt");
+    const proof = stringField(body, "proof");
     const serverNow = Date.now();
+    if (
+      credentialId === null || requestNonce === null || requestIssuedAt === null || proof === null ||
+      requestIssuedAt > serverNow + TOKEN_CHALLENGE_REQUEST_FUTURE_SKEW_MS ||
+      serverNow - requestIssuedAt > TOKEN_CHALLENGE_REQUEST_LIFETIME_MS
+    ) return unauthorizedResponse();
+    const typedCredentialId = credentialId as Id<"childDeviceCredentials">;
+    const authority = await ctx.runQuery(
+      internal.modules.deviceIdentity.internal.getTokenChallengeAuthority,
+      { credentialId: typedCredentialId },
+    );
+    if (
+      authority === null ||
+      !(await verifyCredentialProof(
+        authority.publicKeySpki,
+        `cereveil-child-token-challenge-v1\n${credentialId}\n${requestNonce}\n${requestIssuedAt}`,
+        proof,
+      ))
+    ) return unauthorizedResponse();
+    const challenge = randomBase64Url(32);
     const expiresAt = serverNow + TOKEN_CHALLENGE_LIFETIME_MS;
     const created = await ctx.runMutation(
       internal.modules.deviceIdentity.internal.createTokenChallenge,
       {
         credentialId: typedCredentialId,
+        requestNonceHash: await sha256Base64Url(requestNonce),
         challengeHash: await sha256Base64Url(challenge),
         expiresAt,
+        deleteAt:
+          requestIssuedAt + TOKEN_CHALLENGE_REQUEST_LIFETIME_MS +
+          TOKEN_CHALLENGE_REQUEST_FUTURE_SKEW_MS,
         serverNow,
       },
     );
@@ -105,6 +139,9 @@ http.route({
       { credentialId: typedCredentialId, challengeHash, serverNow },
     );
     if (actor === null) return unauthorizedResponse();
+    if (actor.kind === "revoked") {
+      return jsonResponse({ code: "CHILD_DEVICE_REVOKED" }, 410);
+    }
     return jsonResponse({
       accessJwt: await issueChildDeviceJwt(actor, serverNow),
       accessJwtExpiresAt: serverNow + CHILD_DEVICE_JWT_LIFETIME_MS,

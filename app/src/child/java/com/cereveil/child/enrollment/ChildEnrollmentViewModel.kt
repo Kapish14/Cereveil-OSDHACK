@@ -40,13 +40,17 @@ class ChildEnrollmentViewModel(application: Application) : AndroidViewModel(appl
   private var enrollmentRecoveryJob: Job? = null
 
   init {
+    viewModelScope.launch {
+      ChildEnrollmentAuthorityEvents.revocations.collect {
+        showUnenrolledState()
+      }
+    }
     val enrolled = initialEnrollment
     if (enrolled != null) {
       ChildSupervisionWork.schedule(application, enrolled.activeEnrollmentId)
       ChildSupervisionWork.enqueueNow(application)
       enrollmentRecoveryJob = viewModelScope.launch {
         mutableState.value = coordinator.resume(enrolled)
-        pushTokenRegistrar.registerPending()
       }
     } else if (protectionSetupStore.isPrepared() && protectionCapabilities.current().protectionSetupComplete) {
       protectionSetupComplete = true
@@ -97,8 +101,12 @@ class ChildEnrollmentViewModel(application: Application) : AndroidViewModel(appl
   }
 
   fun refreshPersistedEnrollment() {
+    val enrolled = store.load()
+    if (enrolled == null) {
+      if (mutableState.value is ChildEnrollmentUiState.Enrolled) showUnenrolledState()
+      return
+    }
     if (mutableState.value is ChildEnrollmentUiState.Enrolled || enrollmentRecoveryJob?.isActive == true) return
-    val enrolled = store.load() ?: return
     enrollmentRecoveryJob = viewModelScope.launch {
       val resumed = coordinator.resume(enrolled)
       // A transient backend/auth failure still returns Enrolled with protection retrying. Never
@@ -112,5 +120,13 @@ class ChildEnrollmentViewModel(application: Application) : AndroidViewModel(appl
 
   fun retryScan() {
     mutableState.value = if (protectionSetupComplete) ChildEnrollmentUiState.ReadyToScan else ChildEnrollmentUiState.ProtectionSetup
+  }
+
+  private fun showUnenrolledState() {
+    protectionSetupComplete =
+      protectionSetupStore.isPrepared() && protectionCapabilities.current().protectionSetupComplete
+    mutableState.value =
+      if (protectionSetupComplete) ChildEnrollmentUiState.ReadyToScan
+      else ChildEnrollmentUiState.ProtectionSetup
   }
 }

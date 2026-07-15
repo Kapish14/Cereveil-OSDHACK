@@ -109,7 +109,7 @@ class ChildEnrollmentCoordinatorTest {
 
     assertEquals(ChildEnrollmentResult.Success("jwt-refreshed"), provider.refresh())
     assertEquals(
-      listOf("client:challenge", "key:sign:refresh", "client:exchange", "store:token"),
+      listOf("key:sign:challenge", "client:challenge", "key:sign:refresh", "client:exchange", "store:token"),
       harness.events,
     )
     assertEquals("jwt-refreshed", harness.store.state?.accessJwt)
@@ -128,6 +128,7 @@ class ChildEnrollmentCoordinatorTest {
     assertTrue(result is ChildEnrollmentUiState.Enrolled && result.policyApplied)
     assertEquals(
       listOf(
+        "key:sign:challenge",
         "client:challenge",
         "key:sign:refresh",
         "client:exchange",
@@ -282,16 +283,41 @@ class ChildEnrollmentCoordinatorTest {
       client.commandsUnauthorized = true
       events.clear()
     }
+    var refreshSawExpiresAt: Long? = null
     val sync = ChildSupervisionSyncCoordinator(
       client = harness.client,
       store = harness.store,
       capabilities = { ChildCapabilities(true, true, true, true, true, true) },
-      refreshToken = { ChildEnrollmentResult.Failure(ChildEnrollmentError.Unauthorized) },
+      refreshToken = {
+        refreshSawExpiresAt = harness.store.load()?.accessJwtExpiresAt
+        ChildEnrollmentResult.Failure(ChildEnrollmentError.Unauthorized)
+      },
       now = { 1L },
     )
 
     assertEquals(ChildSupervisionSyncOutcome.Retry, sync.sync())
     assertEquals("enrollment-1", harness.store.load()?.activeEnrollmentId)
+    assertEquals(0L, refreshSawExpiresAt)
+  }
+
+  @Test
+  fun supervisionSyncClearsEnrollmentOnProofBackedRevocation() = runTest {
+    val harness = Harness().apply {
+      store.save(completionState().copy(accessJwtExpiresAt = Long.MAX_VALUE))
+      client.commandsUnauthorized = true
+      events.clear()
+    }
+    val sync = ChildSupervisionSyncCoordinator(
+      client = harness.client,
+      store = harness.store,
+      capabilities = { ChildCapabilities(true, true, true, true, true, true) },
+      refreshToken = { ChildEnrollmentResult.Failure(ChildEnrollmentError.EnrollmentRevoked) },
+      now = { 1L },
+    )
+
+    assertEquals(ChildSupervisionSyncOutcome.Stop, sync.sync())
+    assertEquals(null, harness.store.load())
+    assertEquals(null, harness.store.loadPolicy())
   }
 
   @Test
@@ -353,7 +379,11 @@ private class FakeKeyStore(private val events: MutableList<String>) : ChildDevic
   override fun createKeyAlias() = "key-1".also { events += "key:create" }
   override fun publicKeySpki(alias: String) = "public-key".also { events += "key:public" }
   override fun sign(alias: String, message: String): String = "proof".also {
-    events += if (message.startsWith("cereveil-child-enrollment")) "key:sign:enrollment" else "key:sign:refresh"
+    events += when {
+      message.startsWith("cereveil-child-enrollment") -> "key:sign:enrollment"
+      message.startsWith("cereveil-child-token-challenge") -> "key:sign:challenge"
+      else -> "key:sign:refresh"
+    }
   }
 }
 
@@ -373,6 +403,10 @@ private class FakeStore(private val events: MutableList<String>) : ChildEnrollme
   }
   override fun savePolicy(policy: ChildSupervisionPolicy) { events += "store:policy"; this.policy = policy }
   override fun loadPolicy() = policy
+  override fun clear() {
+    state = null
+    policy = null
+  }
 }
 
 private class FakeClient(private val events: MutableList<String>) : ChildDeviceIdentityClient {
@@ -404,7 +438,14 @@ private class FakeClient(private val events: MutableList<String>) : ChildDeviceI
     else ChildEnrollmentResult.Success(commands).also { if (commands.isNotEmpty()) events += "client:commands" }
   override suspend fun rejectCommand(accessJwt: String, commandId: String, reason: String) =
     ChildEnrollmentResult.Success(Unit).also { events += "client:reject" }
-  override suspend fun createTokenChallenge(credentialId: String) =
+  override suspend fun createTokenChallengeRequest() =
+    ChildEnrollmentResult.Success("request-nonce" to 123L)
+  override suspend fun createTokenChallenge(
+    credentialId: String,
+    requestNonce: String,
+    requestIssuedAt: Long,
+    proof: String,
+  ) =
     ChildEnrollmentResult.Success("challenge").also { events += "client:challenge" }
   override suspend fun exchangeTokenChallenge(credentialId: String, challenge: String, proof: String) =
     ChildEnrollmentResult.Success("jwt-refreshed" to 999L).also { events += "client:exchange" }

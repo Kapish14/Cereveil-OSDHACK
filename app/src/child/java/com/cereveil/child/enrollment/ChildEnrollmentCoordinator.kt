@@ -175,7 +175,25 @@ class ChildDeviceTokenProvider(
     if (state.accessJwtExpiresAt > System.currentTimeMillis() + 30_000) {
       return ChildEnrollmentResult.Success(state.accessJwt)
     }
-    val challenge = when (val result = client.createTokenChallenge(state.credentialId)) {
+    val challengeRequest = when (val result = client.createTokenChallengeRequest()) {
+      is ChildEnrollmentResult.Success -> result.value
+      is ChildEnrollmentResult.Failure -> return result
+    }
+    val (requestNonce, requestIssuedAt) = challengeRequest
+    val requestProof = try {
+      keyStore.sign(
+        state.keyAlias,
+        "cereveil-child-token-challenge-v1\n${state.credentialId}\n$requestNonce\n$requestIssuedAt",
+      )
+    } catch (_: Exception) {
+      return ChildEnrollmentResult.Failure(ChildEnrollmentError.EnrollmentFailed)
+    }
+    val challenge = when (val result = client.createTokenChallenge(
+      state.credentialId,
+      requestNonce,
+      requestIssuedAt,
+      requestProof,
+    )) {
       is ChildEnrollmentResult.Success -> result.value
       is ChildEnrollmentResult.Failure -> return result
     }

@@ -6,6 +6,27 @@ import { deleteEnrollmentFeatureBatch } from "../featureLifecycle/internal";
 
 const BATCH = 50;
 
+export const expireTokenChallenge = internalMutation({
+  args: { challengeId: v.id("childDeviceTokenChallenges") },
+  handler: async (ctx, args) => {
+    const challenge = await ctx.db.get("childDeviceTokenChallenges", args.challengeId);
+    if (challenge !== null) await ctx.db.delete("childDeviceTokenChallenges", challenge._id);
+  },
+});
+
+export const purgeCredentialChallenges = internalMutation({
+  args: { credentialId: v.id("childDeviceCredentials") },
+  handler: async (ctx, args) => {
+    const challenges = await ctx.db.query("childDeviceTokenChallenges")
+      .withIndex("by_credential_id_and_status", (q) => q.eq("credentialId", args.credentialId)).take(BATCH);
+    for (const challenge of challenges) await ctx.db.delete("childDeviceTokenChallenges", challenge._id);
+    if (challenges.length === BATCH) {
+      await ctx.scheduler.runAfter(0, internal.modules.deviceIdentity.lifecycle.purgeCredentialChallenges, args);
+    }
+    return challenges.length < BATCH;
+  },
+});
+
 async function drainEnrollment(ctx: MutationCtx, enrollmentId: Id<"activeEnrollments">) {
   const remoteRequest = await ctx.db.query("remoteAudioRequests")
     .withIndex("by_active_enrollment_id", (q) => q.eq("activeEnrollmentId", enrollmentId)).unique();

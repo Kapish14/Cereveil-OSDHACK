@@ -225,8 +225,22 @@ class HttpChildDeviceIdentityClient(convexSiteUrl: String) : ChildDeviceIdentity
       put("occurredAt", alert.occurredAt)
     }).unit()
 
-  override suspend fun createTokenChallenge(credentialId: String) =
-    request("/device-identity/token/challenge", body = buildJsonObject { put("credentialId", credentialId) })
+  override suspend fun createTokenChallengeRequest() =
+    request("/device-identity/token/challenge/request", body = buildJsonObject {})
+      .map { it.string("requestNonce") to it.long("requestIssuedAt") }
+
+  override suspend fun createTokenChallenge(
+    credentialId: String,
+    requestNonce: String,
+    requestIssuedAt: Long,
+    proof: String,
+  ) =
+    request("/device-identity/token/challenge", body = buildJsonObject {
+      put("credentialId", credentialId)
+      put("requestNonce", requestNonce)
+      put("requestIssuedAt", requestIssuedAt)
+      put("proof", proof)
+    })
       .map { it.string("challenge") }
 
   override suspend fun exchangeTokenChallenge(credentialId: String, challenge: String, proof: String) =
@@ -270,6 +284,7 @@ private fun errorFor(status: Int, code: String?) = when (code) {
   "CHILD_ALREADY_ENROLLED" -> ChildEnrollmentError.AlreadyEnrolled
   "ENROLLMENT_FAILED" -> ChildEnrollmentError.EnrollmentFailed
   "CHILD_DEVICE_UNAUTHORIZED" -> ChildEnrollmentError.Unauthorized
+  "CHILD_DEVICE_REVOKED" -> ChildEnrollmentError.EnrollmentRevoked
   "VALIDATION_FAILED" -> ChildEnrollmentError.ValidationFailed
   "POLICY_VERSION_MISMATCH" -> ChildEnrollmentError.PolicyVersionMismatch
   "INTERNAL_ERROR" -> ChildEnrollmentError.InternalError

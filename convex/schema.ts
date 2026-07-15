@@ -235,6 +235,15 @@ export default defineSchema({
     .index("by_active_enrollment_id_and_status", ["activeEnrollmentId", "status"])
     .index("by_child_device_id", ["childDeviceId"]),
 
+  // Minimal, unlinkable proof material retained after supervision data is deleted. It is durable
+  // so an indefinitely offline former Child Device can still authenticate a future refresh and
+  // learn that its authority ended; it contains no household or Child Profile linkage.
+  childDeviceRevocationProofs: defineTable({
+    credentialId: v.id("childDeviceCredentials"),
+    publicKeySpki: v.string(),
+    revokedAt: v.number(),
+  }).index("by_credential_id", ["credentialId"]),
+
   policyApplicationStates: defineTable({
     householdId: v.id("households"),
     childProfileId: v.id("childProfiles"),
@@ -290,6 +299,7 @@ export default defineSchema({
 
   childDeviceTokenChallenges: defineTable({
     credentialId: v.id("childDeviceCredentials"),
+    requestNonceHash: v.optional(v.string()),
     challengeHash: v.string(),
     status: v.union(v.literal("active"), v.literal("used")),
     expiresAt: v.number(),
@@ -297,6 +307,7 @@ export default defineSchema({
     usedAt: v.optional(v.number()),
   })
     .index("by_challenge_hash", ["challengeHash"])
+    .index("by_credential_id_and_request_nonce_hash", ["credentialId", "requestNonceHash"])
     .index("by_credential_id_and_status", ["credentialId", "status"]),
 
   fcmTokens: defineTable({

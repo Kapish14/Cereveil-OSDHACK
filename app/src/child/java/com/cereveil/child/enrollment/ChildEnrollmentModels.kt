@@ -250,6 +250,7 @@ enum class ChildEnrollmentError {
   EnrollmentFailed,
   ValidationFailed,
   Unauthorized,
+  EnrollmentRevoked,
   PolicyVersionMismatch,
   InvalidPolicy,
   InternalError,
@@ -321,7 +322,13 @@ interface ChildDeviceIdentityClient {
     accessJwt: String,
     alert: ChildSafetyAlert,
   ): ChildEnrollmentResult<Unit> = ChildEnrollmentResult.Failure(ChildEnrollmentError.NetworkUnavailable)
-  suspend fun createTokenChallenge(credentialId: String): ChildEnrollmentResult<String>
+  suspend fun createTokenChallengeRequest(): ChildEnrollmentResult<Pair<String, Long>>
+  suspend fun createTokenChallenge(
+    credentialId: String,
+    requestNonce: String,
+    requestIssuedAt: Long,
+    proof: String,
+  ): ChildEnrollmentResult<String>
   suspend fun exchangeTokenChallenge(
     credentialId: String,
     challenge: String,
