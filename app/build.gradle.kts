@@ -158,3 +158,18 @@ dependencies {
   add("childImplementation", project(":feature:child"))
   add("childImplementation", project(":feature:child:ml"))
 }
+
+tasks.register<Copy>("stageHackathonApks") {
+  group = "distribution"
+  description = "Builds and stages the installable Guardian and Child hackathon APKs."
+
+  dependsOn("assembleGuardianDebug", "assembleChildDebug")
+
+  from(layout.buildDirectory.file("outputs/apk/guardian/debug/app-guardian-debug.apk")) {
+    rename { "Cereveil-Guardian.apk" }
+  }
+  from(layout.buildDirectory.file("outputs/apk/child/debug/app-child-debug.apk")) {
+    rename { "Cereveil-Child.apk" }
+  }
+  into(rootProject.layout.projectDirectory.dir("apks"))
+}

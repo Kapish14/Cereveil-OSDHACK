@@ -12,6 +12,7 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "android:assemble": "./gradlew :app:assembleGuardianDebug :app:assembleChildDebug",
+    "android:stage-apks": "./gradlew :app:stageHackathonApks",
     "android:compile": "./gradlew :app:compileGuardianDebugKotlin :app:compileChildDebugKotlin"
   },
   "keywords": [],

@@ -151,10 +151,34 @@ npm run convex:dev
 
 ## Build and install both role builds
 
+### Download the hackathon APKs
+
+Ready-to-install APKs are kept in [`apks/`](apks/):
+
+- [`Cereveil-Guardian.apk`](apks/Cereveil-Guardian.apk)
+- [`Cereveil-Child.apk`](apks/Cereveil-Child.apk)
+
+These are debug-signed role builds for the hackathon demo. They use the development package names above and keep the development-only Local AI experience available. Git LFS is required when cloning the repository so the APK contents are downloaded instead of only their pointer files.
+
+Install them on separate Android devices by downloading each APK and allowing installation from that source, or use ADB:
+
+```bash
+adb -s <guardian-serial> install -r apks/Cereveil-Guardian.apk
+adb -s <child-serial> install -r apks/Cereveil-Child.apk
+```
+
+### Rebuild the hackathon APKs
+
 Build the two debug APKs from `main`:
 
 ```bash
 npm run android:assemble
+```
+
+To rebuild and refresh the stable files in `apks/` after an app change:
+
+```bash
+npm run android:stage-apks
 ```
 
 The outputs are:
