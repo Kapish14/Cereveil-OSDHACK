@@ -3,14 +3,26 @@ package com.cereveil.guardian.policy
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Apps
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -21,6 +33,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.style.TextOverflow
 import kotlinx.coroutines.delay
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -32,11 +45,15 @@ import com.cereveil.guardian.auth.AndroidGuardianOperationBootstrapper
 import com.cereveil.guardian.auth.SharedPreferencesGuardianInstallationIdProvider
 import com.cereveil.guardian.ui.GuardianCard as CereveilCard
 import com.cereveil.guardian.ui.GuardianSecondaryButton as CereveilSecondaryButton
+import com.cereveil.guardian.ui.GuardianAppIcon
+
+enum class GuardianPolicySection { All, Settings, AppBlocking, ScamText, NsfwScreen }
 
 @Composable
 fun GuardianPolicyContent(
   childProfileId: String,
   showDevelopmentSafetyControls: Boolean = BuildConfig.DEBUG,
+  section: GuardianPolicySection = GuardianPolicySection.All,
 ) {
   val application = LocalContext.current.applicationContext as CereveilApplication
   val factory = remember(childProfileId) { viewModelFactory { initializer {
@@ -56,10 +73,21 @@ fun GuardianPolicyContent(
       color = MaterialTheme.colorScheme.error,
     )
     is GuardianPolicyUiState.Ready -> {
-      Text("Protection controls", style = MaterialTheme.typography.titleLarge)
-      PolicyToggle(PolicyControl.AppBlocking, current, model::update)
-      if (showDevelopmentSafetyControls) {
-        Text("Active Screen Safety", style = MaterialTheme.typography.titleLarge)
+      if (section == GuardianPolicySection.All || section == GuardianPolicySection.AppBlocking) {
+        if (section == GuardianPolicySection.All) Text("App blocking", style = MaterialTheme.typography.titleLarge)
+        PolicyToggle(
+          PolicyControl.AppBlocking,
+          current,
+          model::update,
+          label = if (section == GuardianPolicySection.AppBlocking) "Enabled" else null,
+        )
+      }
+      if (showDevelopmentSafetyControls &&
+        (section == GuardianPolicySection.All || section == GuardianPolicySection.ScamText)
+      ) {
+        if (section == GuardianPolicySection.All) {
+          Text("Active Screen Safety", style = MaterialTheme.typography.titleLarge)
+        }
         SafetyDetectorCard(
           title = "Scam Text Detection",
           detector = GuardianSafetyDetector.ScamText,
@@ -67,8 +95,13 @@ fun GuardianPolicyContent(
           applied = current.policy.applied?.scamTextSafety,
           apps = current.catalogApps,
           saving = current.savingFeature == PolicyFeature.ScamTextSafety,
+          compact = section != GuardianPolicySection.All,
           onChange = model::updateSafety,
         )
+      }
+      if (showDevelopmentSafetyControls &&
+        (section == GuardianPolicySection.All || section == GuardianPolicySection.NsfwScreen)
+      ) {
         SafetyDetectorCard(
           title = "NSFW Screen Detection",
           detector = GuardianSafetyDetector.NsfwScreen,
@@ -77,11 +110,15 @@ fun GuardianPolicyContent(
           apps = current.catalogApps,
           saving = current.savingFeature == PolicyFeature.NsfwScreenSafety,
           available = current.policy.supportsNsfwScreenDetection,
+          compact = section != GuardianPolicySection.All,
           onChange = model::updateSafety,
         )
       }
-      PolicyToggle(PolicyControl.LocationSharing, current, model::update)
-      PolicyToggle(PolicyControl.ScreenTime, current, model::update)
+      if (section == GuardianPolicySection.All || section == GuardianPolicySection.Settings) {
+        Text("General supervision", style = MaterialTheme.typography.titleLarge)
+        PolicyToggle(PolicyControl.LocationSharing, current, model::update)
+        PolicyToggle(PolicyControl.ScreenTime, current, model::update)
+      }
       current.updateError?.let { error ->
         Text(
           if (error == GuardianPolicyError.Conflict) "Settings changed on another Guardian Device. Reloaded latest settings."
@@ -102,6 +139,7 @@ private fun SafetyDetectorCard(
   apps: List<GuardianSelectableApp>,
   saving: Boolean,
   available: Boolean = true,
+  compact: Boolean = false,
   onChange: (GuardianSafetyDetector, GuardianSafetyDetectorPolicy) -> Unit,
 ) {
   var search by remember(detector) { mutableStateOf("") }
@@ -113,17 +151,17 @@ private fun SafetyDetectorCard(
   CereveilCard {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
       Column(Modifier.weight(1f)) {
-        Text(title, style = MaterialTheme.typography.titleMedium)
-        Text(if (detector == GuardianSafetyDetector.NsfwScreen) "Android 11+ • blur only" else "Visible message text • warning")
+        Text(if (compact) "Detection" else title, style = MaterialTheme.typography.titleMedium)
+        if (!compact) Text(if (detector == GuardianSafetyDetector.NsfwScreen) "Screens • blur" else "Messages • warning")
       }
-      if (pending) CircularProgressIndicator(modifier = Modifier.fillMaxWidth(0.08f), strokeWidth = 2.dp)
+      if (pending) CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp)
       Switch(
         checked = desired.enabled,
         onCheckedChange = { enabled -> onChange(detector, desired.copy(enabled = enabled)) },
         enabled = available && !pending && (!desired.monitoredPackageNames.isEmpty() || desired.enabled),
       )
     }
-    if (!available) Text("Unavailable on this Child Device. NSFW Screen Detection requires Android 11 or later.")
+    if (!available) Text("Requires Android 11+")
     Text("Sensitivity")
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
       GuardianSafetySensitivity.entries.forEach { sensitivity ->
@@ -136,46 +174,52 @@ private fun SafetyDetectorCard(
       }
     }
     Text(
-      if (desired.monitoredPackageNames.isEmpty()) "Choose at least one app before enabling."
-      else "Monitoring ${desired.monitoredPackageNames.size} app${if (desired.monitoredPackageNames.size == 1) "" else "s"}.",
+      if (desired.monitoredPackageNames.isEmpty()) "No apps selected"
+      else "${desired.monitoredPackageNames.size} app${if (desired.monitoredPackageNames.size == 1) "" else "s"} selected",
       style = MaterialTheme.typography.labelSmall,
     )
     CereveilSecondaryButton(
       text = if (choosingApps) "Done choosing apps" else "Choose monitored apps",
       onClick = { choosingApps = !choosingApps },
+      leadingIcon = Icons.Default.Apps,
     )
     if (choosingApps) {
       OutlinedTextField(
         value = search,
         onValueChange = { search = it },
-        label = { Text("Search monitored apps") },
+        placeholder = { Text("Search apps") },
+        leadingIcon = { androidx.compose.material3.Icon(Icons.Default.Search, contentDescription = null) },
+        shape = RoundedCornerShape(16.dp),
         modifier = Modifier.fillMaxWidth(),
         singleLine = true,
       )
-      visibleApps.forEach { app ->
-        val selected = app.packageName in desired.monitoredPackageNames
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-          Checkbox(
-            checked = selected,
-            onCheckedChange = { checked ->
-              if (!checked && desired.enabled && desired.monitoredPackageNames.size == 1) return@Checkbox
-              val packages = if (checked) desired.monitoredPackageNames + app.packageName
-              else desired.monitoredPackageNames - app.packageName
-              onChange(detector, desired.copy(monitoredPackageNames = packages))
-            },
-            enabled = available && !pending,
-          )
-          Column {
-            Text(app.label)
-            Text(app.packageName, style = MaterialTheme.typography.labelSmall)
+      LazyColumn(
+        modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+      ) {
+        items(visibleApps, key = { it.packageName }) { app ->
+          val selected = app.packageName in desired.monitoredPackageNames
+          Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            GuardianAppIcon(app.packageName, app.label)
+            Spacer(Modifier.width(12.dp))
+            Text(app.label, modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Checkbox(
+              checked = selected,
+              onCheckedChange = { checked ->
+                if (!checked && desired.enabled && desired.monitoredPackageNames.size == 1) return@Checkbox
+                val packages = if (checked) desired.monitoredPackageNames + app.packageName
+                else desired.monitoredPackageNames - app.packageName
+                onChange(detector, desired.copy(monitoredPackageNames = packages))
+              },
+              enabled = available && !pending,
+            )
           }
         }
       }
-      desired.monitoredPackageNames.filter { selected -> apps.none { it.packageName == selected } }.forEach { packageName ->
-        Text("$packageName • not currently installed", style = MaterialTheme.typography.labelSmall)
+      desired.monitoredPackageNames.filter { selected -> apps.none { it.packageName == selected } }.forEach {
+        Text("Previously selected app • not currently installed", style = MaterialTheme.typography.labelSmall)
       }
     }
-    if (pending) Text("Waiting for Child Device")
   }
 }
 
@@ -184,6 +228,7 @@ private fun PolicyToggle(
   control: PolicyControl,
   state: GuardianPolicyUiState.Ready,
   onChange: (PolicyFeature, Boolean, Boolean) -> Unit,
+  label: String? = null,
 ) {
   val feature = control.feature
   val applied = state.policy.applied
@@ -202,8 +247,8 @@ private fun PolicyToggle(
   }
   CereveilCard {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-      Text(control.label, modifier = Modifier.weight(1f))
-      if (pending) CircularProgressIndicator(modifier = Modifier.fillMaxWidth(0.08f), strokeWidth = 2.dp)
+      Text(label ?: control.label, modifier = Modifier.weight(1f))
+      if (pending) CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp)
       Switch(
         checked = appliedValue,
         onCheckedChange = { onChange(feature, it, false) },
