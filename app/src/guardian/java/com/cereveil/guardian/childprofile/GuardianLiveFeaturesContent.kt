@@ -7,30 +7,47 @@ import android.os.Bundle
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Block
+import androidx.compose.material.icons.filled.Apps
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Map
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Security
+import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -59,7 +76,13 @@ import com.cereveil.guardian.ui.GuardianFeatureCard
 import com.cereveil.guardian.ui.GuardianGreen
 import com.cereveil.guardian.ui.GuardianOrange
 import com.cereveil.guardian.ui.GuardianPrimary
+import com.cereveil.guardian.ui.GuardianRemoteOperationCard
 import com.cereveil.guardian.ui.GuardianSectionHeader
+import com.cereveil.guardian.ui.GuardianAppIcon
+import com.cereveil.guardian.ui.GuardianDonutOverview
+import com.cereveil.guardian.ui.GuardianScreenTimeChart
+import com.cereveil.guardian.ui.GuardianUsageDatum
+import com.cereveil.guardian.ui.GuardianUsageRow
 import com.google.android.gms.maps.CameraUpdateFactory
 import com.google.android.gms.maps.MapView
 import com.google.android.gms.maps.model.LatLng
@@ -114,6 +137,8 @@ data class GuardianLiveFeaturesState(
   val location: GuardianLocation? = null,
   val locationRefreshPending: Boolean = false,
   val locationRefreshStatus: String? = null,
+  val locationRefreshRequestedAt: Long? = null,
+  val serverClockOffsetMs: Long = 0,
   val screenTime: List<GuardianScreenTimeApp> = emptyList(),
   val screenMeasuredAt: Long? = null,
   val screenLoading: Boolean = true,
@@ -123,7 +148,7 @@ data class GuardianLiveFeaturesState(
   val message: String? = null,
 )
 
-enum class GuardianFeatureSection { Home, Location, Activity, Settings }
+enum class GuardianFeatureSection { Home, Location, Activity, AppBlocking, RemoteAudio }
 
 class GuardianLiveFeaturesViewModel(
   application: Application,
@@ -262,6 +287,8 @@ class GuardianLiveFeaturesViewModel(
           ) },
           locationRefreshPending = refresh?.string("status") == "pending",
           locationRefreshStatus = refresh?.string("status"),
+          locationRefreshRequestedAt = refresh?.long("requestedAt"),
+          serverClockOffsetMs = root.long("serverNow") - System.currentTimeMillis(),
         )
       }
     }
@@ -362,8 +389,26 @@ class GuardianLiveFeaturesViewModel(
     ))
   }
 
-  fun requestLocation() = mutate {
-    convex.mutation<JsonElement>("modules/location/guardian:requestLocationRefresh", commonArgs())
+  fun requestLocation() {
+    if (mutable.value.locationRefreshPending) return
+    val previous = mutable.value
+    mutable.value = previous.copy(
+      locationRefreshPending = true,
+      locationRefreshStatus = "pending",
+      locationRefreshRequestedAt = System.currentTimeMillis() + previous.serverClockOffsetMs,
+    )
+    viewModelScope.launch {
+      runCatching {
+        convex.mutation<JsonElement>("modules/location/guardian:requestLocationRefresh", commonArgs())
+      }.onFailure {
+        mutable.value = mutable.value.copy(
+          locationRefreshPending = previous.locationRefreshPending,
+          locationRefreshStatus = previous.locationRefreshStatus,
+          locationRefreshRequestedAt = previous.locationRefreshRequestedAt,
+          message = "Location refresh is not available yet",
+        )
+      }
+    }
   }
 
   fun resolveAccess(requestId: String, approve: Boolean, minutes: Int = 15, untilBlockEnds: Boolean = false) = mutate {
@@ -396,7 +441,10 @@ fun GuardianLiveFeaturesContent(
   childProfileId: String,
   section: GuardianFeatureSection = GuardianFeatureSection.Home,
   openSafetyAlerts: Boolean = false,
-  onOpenSettings: () -> Unit = {},
+  onOpenScam: () -> Unit = {},
+  onOpenNsfw: () -> Unit = {},
+  onOpenAppBlocking: () -> Unit = {},
+  onOpenRemoteAudio: () -> Unit = {},
 ) {
   val application = LocalContext.current.applicationContext as Application
   val factory = remember(childProfileId) { viewModelFactory { initializer {
@@ -413,25 +461,15 @@ fun GuardianLiveFeaturesContent(
   var appSearch by rememberSaveable(childProfileId) { mutableStateOf("") }
   if (state.loading) { CircularProgressIndicator(); return }
   state.message?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+  val usage = state.screenTime.map { GuardianUsageDatum(it.packageName, it.label, it.totalMs) }
   LaunchedEffect(openSafetyAlerts) {
     if (openSafetyAlerts) safetyAlertsRequester.bringIntoView()
   }
 
   if (section == GuardianFeatureSection.Home) {
     GuardianSectionHeader("Today’s Overview")
-    CereveilCard {
-      Text(
-        if (state.screenLoading) "Checking today’s activity…" else formatDuration(state.screenTime.sumOf(GuardianScreenTimeApp::totalMs)),
-        style = MaterialTheme.typography.headlineMedium,
-      )
-      Text("Total screen time today", color = MaterialTheme.colorScheme.onSurfaceVariant)
-      state.screenTime.take(3).forEach { app ->
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-          Text(app.label, modifier = Modifier.weight(1f))
-          Text(formatDuration(app.totalMs), color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-      }
-    }
+    if (state.screenLoading) CereveilCard { Text("Checking today’s activity…") }
+    else GuardianDonutOverview(usage)
     if (BuildConfig.DEBUG) {
       GuardianSectionHeader("AI Safety Hub")
       GuardianFeatureCard(
@@ -440,7 +478,7 @@ fun GuardianLiveFeaturesContent(
         title = "Scam Text Detection",
         subtitle = "Warn about likely scam messages in selected apps",
         status = "Manage",
-        onClick = onOpenSettings,
+        onClick = onOpenScam,
       )
       GuardianFeatureCard(
         icon = Icons.Default.VisibilityOff,
@@ -448,20 +486,26 @@ fun GuardianLiveFeaturesContent(
         title = "NSFW Screen Detection",
         subtitle = "Blur likely explicit content in selected apps",
         status = "Manage",
-        onClick = onOpenSettings,
+        onClick = onOpenNsfw,
       )
     }
-    GuardianSectionHeader("Device Supervision")
-    GuardianFeatureCard(
-      icon = Icons.Default.Block,
-      iconTint = GuardianPrimary,
-      title = "App Blocking",
-      subtitle = "Block apps now or on a recurring schedule",
-      status = "Manage",
-      onClick = onOpenSettings,
-    )
     GuardianSectionHeader("Remote Operations")
-    GuardianRemoteAudioCard(childProfileId)
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+      GuardianRemoteOperationCard(
+        icon = Icons.AutoMirrored.Filled.VolumeUp,
+        label = "One-Way\nAudio",
+        accent = GuardianOrange,
+        onClick = onOpenRemoteAudio,
+        modifier = Modifier.weight(1f),
+      )
+      GuardianRemoteOperationCard(
+        icon = Icons.Default.Lock,
+        label = "App Lock",
+        accent = MaterialTheme.colorScheme.tertiary,
+        onClick = onOpenAppBlocking,
+        modifier = Modifier.weight(1f),
+      )
+    }
     SafetyAlertFeed(
       state.safetyAlerts,
       model::clearSafetyAlerts,
@@ -469,78 +513,58 @@ fun GuardianLiveFeaturesContent(
     )
   }
 
-  if (section == GuardianFeatureSection.Settings) {
-  Text("App blocking", style = MaterialTheme.typography.titleLarge)
-  state.catalogSyncedAt?.let {
-    Text("App list updated ${(System.currentTimeMillis() - it).coerceAtLeast(0) / 60_000} min ago")
-  }
-  if (state.apps.isEmpty()) Text("Waiting for the Child Device app list.")
-  else {
-    val configuredCount = state.apps.count { it.blocked || it.schedules.isNotEmpty() }
-    Text("${state.apps.size} apps available • $configuredCount with blocking rules", style = MaterialTheme.typography.labelSmall)
-    CereveilSecondaryButton(
-      text = if (showingApps) "Done managing apps" else "Manage blocked apps",
-      onClick = { showingApps = !showingApps },
-    )
-  }
-  if (showingApps) OutlinedTextField(
-    value = appSearch,
-    onValueChange = { appSearch = it },
-    label = { Text("Search apps") },
-    modifier = Modifier.fillMaxWidth(),
-    singleLine = true,
-  )
-  state.apps.filter {
-    showingApps && (appSearch.isBlank() || it.label.contains(appSearch, true) || it.packageName.contains(appSearch, true))
-  }.forEach { item -> CereveilCard {
-    var editingSchedule by rememberSaveable(item.packageName) { mutableStateOf(false) }
-    var weekdays by rememberSaveable(item.packageName) { mutableStateOf("1,2,3,4,5,6,7") }
-    var startTime by rememberSaveable(item.packageName) { mutableStateOf("22:00") }
-    var endTime by rememberSaveable(item.packageName) { mutableStateOf("07:00") }
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-      Column(Modifier.weight(1f)) { Text(item.label); Text(item.packageName, style = MaterialTheme.typography.labelSmall) }
-      CereveilSecondaryButton(text = if (item.blocked) "Unblock" else "Block", onClick = {
-        model.setManualBlock(item.packageName, !item.blocked)
-      })
-    }
-    if (item.policyPending) {
-      Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        CircularProgressIndicator(strokeWidth = 2.dp)
-        Text("Waiting for Child Device")
-      }
-    } else if (item.blocked || item.schedules.isNotEmpty()) Text("Applied on Child Device")
-    item.schedules.forEach { schedule ->
-      Text("Days ${schedule.weekdays.joinToString()} • ${minuteLabel(schedule.startMinute)}–${minuteLabel(schedule.endMinute)}")
-      CereveilSecondaryButton(text = "Remove schedule", onClick = {
-        model.removeSchedule(item.packageName, schedule.scheduleId)
-      })
-    }
-    if (editingSchedule) {
-      OutlinedTextField(
-        value = weekdays,
-        onValueChange = { weekdays = it },
-        label = { Text("Weekdays (1=Mon … 7=Sun)") },
-        modifier = Modifier.fillMaxWidth(),
+  if (section == GuardianFeatureSection.AppBlocking) {
+    if (state.apps.isEmpty()) Text("Waiting for app list…")
+    else {
+      val configuredCount = state.apps.count { it.blocked || it.schedules.isNotEmpty() }
+      val updatedMinutes = state.catalogSyncedAt?.let { (System.currentTimeMillis() - it).coerceAtLeast(0) / 60_000 }
+      Text(
+        "${state.apps.size} apps • $configuredCount configured${updatedMinutes?.let { " • updated ${it}m ago" } ?: ""}",
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
       )
-      Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        OutlinedTextField(value = startTime, onValueChange = { startTime = it }, label = { Text("Start HH:mm") }, modifier = Modifier.weight(1f))
-        OutlinedTextField(value = endTime, onValueChange = { endTime = it }, label = { Text("End HH:mm") }, modifier = Modifier.weight(1f))
-      }
-      CereveilPrimaryButton(text = "Add schedule", onClick = {
-        model.addSchedule(item.packageName, weekdays, startTime, endTime)
-        editingSchedule = false
-      })
-    } else if (item.schedules.size < 8) {
-      CereveilSecondaryButton(text = "Add schedule", onClick = { editingSchedule = true })
+      CereveilSecondaryButton(
+        text = if (showingApps) "Done" else "Manage apps",
+        onClick = { showingApps = !showingApps },
+        leadingIcon = Icons.Default.Apps,
+      )
     }
-  } }
+    if (showingApps) {
+      OutlinedTextField(
+        value = appSearch,
+        onValueChange = { appSearch = it },
+        placeholder = { Text("Search apps") },
+        modifier = Modifier.fillMaxWidth(),
+        singleLine = true,
+      )
+      val visibleApps = state.apps.filter {
+        appSearch.isBlank() || it.label.contains(appSearch, true) || it.packageName.contains(appSearch, true)
+      }
+      LazyColumn(
+        modifier = Modifier.fillMaxWidth().heightIn(max = 540.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+      ) {
+        items(visibleApps, key = { it.packageName }) { item ->
+          AppBlockingAppCard(item, model)
+        }
+      }
+    }
+  }
+
+  if (section == GuardianFeatureSection.RemoteAudio) {
+    GuardianRemoteAudioCard(childProfileId)
   }
 
   if (section == GuardianFeatureSection.Home) {
     if (state.accessRequests.isNotEmpty()) Text("Access requests", style = MaterialTheme.typography.titleLarge)
     state.accessRequests.forEach { request ->
       CereveilCard {
-        Text("${request.packageName} requested access")
+        val app = state.apps.firstOrNull { it.packageName == request.packageName }
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+          GuardianAppIcon(request.packageName, app?.label ?: "App")
+          Spacer(Modifier.width(12.dp))
+          Text("${app?.label ?: "An app"} requested access", style = MaterialTheme.typography.titleMedium)
+        }
         val remainingMinutes = request.scheduledCoverageEnd?.let {
           ((it - System.currentTimeMillis()).coerceAtLeast(0) / 60_000).toInt()
         }
@@ -561,46 +585,142 @@ fun GuardianLiveFeaturesContent(
   }
 
   if (section == GuardianFeatureSection.Location) {
-  Text("Latest location", style = MaterialTheme.typography.titleLarge)
+  Text("Location", style = MaterialTheme.typography.headlineSmall)
   state.location?.let { location ->
     val hasEmbeddedMap = stringResource(R.string.google_maps_key).isNotBlank()
     if (hasEmbeddedMap) GuardianLocationMap(location)
-    else Text("Embedded map preview is not configured in this build. Open the current location in your maps app below.")
+    else Text("Map preview unavailable", color = MaterialTheme.colorScheme.onSurfaceVariant)
     val ageMinutes = ((System.currentTimeMillis() - location.capturedAt).coerceAtLeast(0) / 60_000)
-    Text("${"%.5f".format(location.latitude)}, ${"%.5f".format(location.longitude)}")
     Text("Updated $ageMinutes min ago • ±${location.accuracyMeters.toInt()} m")
-    if (ageMinutes >= 30) Text("Location may be outdated.", color = MaterialTheme.colorScheme.tertiary)
+    if (ageMinutes >= 30) Text("May be outdated", color = MaterialTheme.colorScheme.tertiary)
     val context = LocalContext.current
-    CereveilSecondaryButton(text = "Open in maps", onClick = {
+    CereveilSecondaryButton(text = "Open in maps", leadingIcon = Icons.Default.Map, onClick = {
       val uri = Uri.parse("geo:${location.latitude},${location.longitude}?q=${location.latitude},${location.longitude}")
       runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, uri)) }
     })
   } ?: Text("No location received yet.")
-  CereveilSecondaryButton(text = if (state.locationRefreshPending) "Refreshing…" else "Refresh location now", onClick = {
-    if (!state.locationRefreshPending) model.requestLocation()
+  var locationClock by remember { mutableLongStateOf(System.currentTimeMillis()) }
+  val serverNow = locationClock + state.serverClockOffsetMs
+  val cooldownUntil = (state.locationRefreshRequestedAt ?: 0L) + LOCATION_REFRESH_COOLDOWN_MS
+  val cooldownSeconds = locationRefreshCooldownSeconds(state.locationRefreshRequestedAt, serverNow)
+  LaunchedEffect(cooldownUntil) {
+    while (cooldownUntil > System.currentTimeMillis() + state.serverClockOffsetMs) {
+      delay(1_000)
+      locationClock = System.currentTimeMillis()
+    }
+  }
+  CereveilSecondaryButton(
+    text = when {
+      state.locationRefreshPending -> "Request sent • ${cooldownSeconds}s"
+      cooldownSeconds > 0 -> "Available in ${cooldownSeconds}s"
+      else -> "Refresh location now"
+    },
+    leadingIcon = Icons.Default.Refresh,
+    enabled = !state.locationRefreshPending && cooldownSeconds == 0L,
+    onClick = {
+    if (!state.locationRefreshPending && cooldownSeconds == 0L) model.requestLocation()
   })
-  if (state.locationRefreshStatus == "failed") Text("The latest refresh failed; the previous location is preserved.")
-  if (state.locationRefreshStatus == "expired") Text("The latest refresh timed out; the previous location is preserved.")
+  if (state.locationRefreshStatus == "failed") Text("Refresh failed • showing last location")
+  if (state.locationRefreshStatus == "expired") Text("Refresh timed out • showing last location")
   }
 
   if (section == GuardianFeatureSection.Activity) {
-  Text("Today’s screen time", style = MaterialTheme.typography.titleLarge)
-  if (state.screenError) Text("Couldn’t refresh Screen Time.", color = MaterialTheme.colorScheme.error)
-  else if (state.screenLoading) Text("Fetching current Android usage…")
-  else if (state.screenTime.isEmpty()) Text("No app usage reported for today yet.")
-  else Text(
-    "Total today: ${formatDuration(state.screenTime.sumOf(GuardianScreenTimeApp::totalMs))}",
-    style = MaterialTheme.typography.titleMedium,
-  )
-  state.screenTime.forEach { row -> CereveilCard {
-    Text(row.label)
-    Text(formatDuration(row.totalMs))
-  } }
-  CereveilSecondaryButton(
-    text = if (state.screenRefreshPending) "Refreshing screen time…" else "Refresh screen time now",
-    onClick = model::refreshScreenTime,
-    enabled = !state.screenRefreshPending,
-  )
+    Column(Modifier.fillMaxWidth()) {
+      Text("Child Screen Time", style = MaterialTheme.typography.headlineSmall)
+      Text("App usage breakdown", color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+    Row(
+      Modifier.fillMaxWidth(),
+      horizontalArrangement = Arrangement.End,
+      verticalAlignment = Alignment.CenterVertically,
+    ) {
+      state.screenMeasuredAt?.let { measuredAt ->
+        val ageMinutes = (System.currentTimeMillis() - measuredAt).coerceAtLeast(0) / 60_000
+        Text(
+          if (ageMinutes < 1) "Updated just now" else "Updated ${ageMinutes}m ago",
+          style = MaterialTheme.typography.labelSmall,
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+      }
+      IconButton(onClick = model::refreshScreenTime, enabled = !state.screenRefreshPending) {
+        if (state.screenRefreshPending) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
+        else Icon(Icons.Default.Refresh, contentDescription = "Refresh screen time")
+      }
+    }
+    if (state.screenError) Text("Couldn’t refresh Screen Time.", color = MaterialTheme.colorScheme.error)
+    else if (state.screenLoading) CereveilCard { Text("Fetching current Android usage…") }
+    else {
+      GuardianScreenTimeChart(usage)
+      GuardianSectionHeader("Most Used Apps Today")
+      val sortedUsage = usage.sortedByDescending(GuardianUsageDatum::millis)
+      sortedUsage.take(10).forEachIndexed { index, item ->
+        GuardianUsageRow(item, rank = index + 1)
+      }
+    }
+  }
+}
+
+@Composable
+private fun AppBlockingAppCard(
+  item: GuardianCatalogApp,
+  model: GuardianLiveFeaturesViewModel,
+) {
+  var editingSchedule by rememberSaveable(item.packageName) { mutableStateOf(false) }
+  var weekdays by rememberSaveable(item.packageName) { mutableStateOf("1,2,3,4,5,6,7") }
+  var startTime by rememberSaveable(item.packageName) { mutableStateOf("22:00") }
+  var endTime by rememberSaveable(item.packageName) { mutableStateOf("07:00") }
+  CereveilCard {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+      GuardianAppIcon(item.packageName, item.label)
+      Spacer(Modifier.width(12.dp))
+      Text(item.label, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+      if (item.schedules.size < 8) {
+        IconButton(onClick = { editingSchedule = !editingSchedule }) {
+          Icon(Icons.Default.Schedule, contentDescription = "Schedule ${item.label}")
+        }
+      }
+      CereveilSecondaryButton(
+        text = if (item.blocked) "Unblock" else "Block",
+        modifier = Modifier.width(96.dp),
+        fillWidth = false,
+        onClick = { model.setManualBlock(item.packageName, !item.blocked) },
+      )
+    }
+    if (item.policyPending) {
+      CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
+    }
+    item.schedules.forEach { schedule ->
+      Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text(
+          "${schedule.weekdays.joinToString()} • ${minuteLabel(schedule.startMinute)}–${minuteLabel(schedule.endMinute)}",
+          modifier = Modifier.weight(1f),
+          style = MaterialTheme.typography.labelSmall,
+        )
+        CereveilSecondaryButton(
+          text = "Remove",
+          modifier = Modifier.width(92.dp),
+          fillWidth = false,
+          onClick = { model.removeSchedule(item.packageName, schedule.scheduleId) },
+        )
+      }
+    }
+    if (editingSchedule) {
+      OutlinedTextField(
+        value = weekdays,
+        onValueChange = { weekdays = it },
+        label = { Text("Days 1–7") },
+        modifier = Modifier.fillMaxWidth(),
+        singleLine = true,
+      )
+      Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        OutlinedTextField(value = startTime, onValueChange = { startTime = it }, label = { Text("Start") }, modifier = Modifier.weight(1f), singleLine = true)
+        OutlinedTextField(value = endTime, onValueChange = { endTime = it }, label = { Text("End") }, modifier = Modifier.weight(1f), singleLine = true)
+      }
+      CereveilPrimaryButton(text = "Save schedule", onClick = {
+        model.addSchedule(item.packageName, weekdays, startTime, endTime)
+        editingSchedule = false
+      })
+    }
   }
 }
 
@@ -642,9 +762,11 @@ private fun GuardianLocationMap(location: GuardianLocation) {
   }
 }
 
-private fun formatDuration(ms: Long): String {
-  val minutes = ms / 60_000
-  return if (minutes >= 60) "${minutes / 60}h ${minutes % 60}m" else "${minutes}m"
-}
-
 private fun minuteLabel(value: Int) = "%02d:%02d".format(value / 60, value % 60)
+
+private const val LOCATION_REFRESH_COOLDOWN_MS = 2 * 60_000L
+
+internal fun locationRefreshCooldownSeconds(requestedAt: Long?, serverNow: Long): Long {
+  if (requestedAt == null) return 0L
+  return ((requestedAt + LOCATION_REFRESH_COOLDOWN_MS - serverNow).coerceAtLeast(0L) + 999L) / 1_000L
+}
