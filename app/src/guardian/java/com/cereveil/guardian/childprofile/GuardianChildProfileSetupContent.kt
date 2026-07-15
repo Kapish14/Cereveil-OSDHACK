@@ -352,22 +352,26 @@ private fun GuardianDashboard(
         GuardianTab.Home -> {
           when (homeDetail) {
             null -> {
-              GuardianProtectionCard(
-                title = if (profile.protectionStatus == GuardianProtectionStatus.FullyProtected) "Protection active"
-                  else protectionDisplayName(profile.protectionStatus, profile.connectivityStatus),
-                supportingText = relativeHeartbeatLabel(profile),
-                attentionText = profile.unavailableCapabilities.takeIf { it.isNotEmpty() }
-                  ?.joinToString(prefix = "Needs attention: "),
-              )
-              GuardianLiveFeaturesContent(
-                profile.childProfileId,
-                section = GuardianFeatureSection.Home,
-                openSafetyAlerts = openSafetyAlerts,
-                onOpenScam = { openDetail(GuardianHomeDetail.ScamText) },
-                onOpenNsfw = { openDetail(GuardianHomeDetail.NsfwScreen) },
-                onOpenAppBlocking = { openDetail(GuardianHomeDetail.AppBlocking) },
-                onOpenRemoteAudio = { openDetail(GuardianHomeDetail.RemoteAudio) },
-              )
+              if (profile.enrollmentStatus == ChildProfileEnrollmentStatus.Unenrolled) {
+                // UI for Connect with Child
+              } else {
+                GuardianProtectionCard(
+                  title = if (profile.protectionStatus == GuardianProtectionStatus.FullyProtected) "Protection active"
+                    else protectionDisplayName(profile.protectionStatus, profile.connectivityStatus),
+                  supportingText = relativeHeartbeatLabel(profile),
+                  attentionText = profile.unavailableCapabilities.takeIf { it.isNotEmpty() }
+                    ?.joinToString(prefix = "Needs attention: "),
+                )
+                GuardianLiveFeaturesContent(
+                  profile.childProfileId,
+                  section = GuardianFeatureSection.Home,
+                  openSafetyAlerts = openSafetyAlerts,
+                  onOpenScam = { openDetail(GuardianHomeDetail.ScamText) },
+                  onOpenNsfw = { openDetail(GuardianHomeDetail.NsfwScreen) },
+                  onOpenAppBlocking = { openDetail(GuardianHomeDetail.AppBlocking) },
+                  onOpenRemoteAudio = { openDetail(GuardianHomeDetail.RemoteAudio) },
+                )
+              }
             }
             GuardianHomeDetail.ScamText -> {
               FeatureDetailHeader("Scam Text Detection", closeDetail)
