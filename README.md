@@ -37,8 +37,6 @@ Active Screen Safety is intentionally exposed only in **debug/development builds
 - Disclosed, Child-stoppable WebRTC live audio; audio is not recorded and is not relayed through Convex.
 - End Supervision, device replacement, capability-health reporting, and revocable Guardian/Child device authorization.
 
-Safe Browsing/VPN enforcement is represented in the policy model but is **not part of the hackathon build**.
-
 ## Requirements
 
 - Android Studio with Android SDK 36

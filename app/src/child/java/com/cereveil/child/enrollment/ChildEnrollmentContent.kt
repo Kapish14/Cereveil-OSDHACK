@@ -214,7 +214,6 @@ private fun ProtectionSetup(
   if (!status.complete) {
     CereveilNotice("Still needed: ${status.missingSettings().joinToString()}.")
   }
-  CereveilNotice("Safe Browsing and VPN access are not part of this hackathon build.")
   CereveilPrimaryButton(text = "Check settings and continue", onClick = onContinue)
 }
 

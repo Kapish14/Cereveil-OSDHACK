@@ -150,7 +150,6 @@ Internet is required for Guardian authentication, enrollment, policy synchroniza
 - Location and screen time are latest/on-demand states rather than behavioral histories.
 - Remote audio is disclosed, stoppable by the Child, never recorded, and uses STUN-only WebRTC.
 - Active Screen Safety remains debug-only until accessibility screenshot distribution compliance is resolved.
-- Safe Browsing/VPN is excluded from this hackathon build instead of presenting an incomplete control as protection.
 
 Detailed decisions are recorded under [`docs/adr`](docs/adr).
 

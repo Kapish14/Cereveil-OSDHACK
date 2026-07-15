@@ -26,7 +26,7 @@ class ChildEnrollmentCoordinatorTest {
   }
 
   @Test
-  fun hackathonProtectionSetupDoesNotRequireVpn() {
+  fun protectionSetupDoesNotRequireVpn() {
     val capabilities = ChildCapabilities(
       accessibilityService = true,
       usageAccess = true,
