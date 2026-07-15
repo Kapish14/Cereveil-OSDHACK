@@ -354,7 +354,7 @@ private fun GuardianDashboard(
             null -> {
               if (profile.enrollmentStatus == ChildProfileEnrollmentStatus.Unenrolled) {
                 GuardianCard(containerColor = GuardianOrangeContainer) {
-                  Text("Connect your child's device", style = MaterialTheme.typography.titleLarge)
+                  Text("Connect your child's device", style = MaterialTheme.typography.titleLarge, color = GuardianOrange)
                   Text("Supervision is paused. Setup must be completed on your child's phone to start protection.")
                   GuardianPrimaryButton(
                     text = "Set up child device",
