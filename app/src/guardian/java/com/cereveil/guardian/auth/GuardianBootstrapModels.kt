@@ -70,10 +70,28 @@ interface GuardianOperationBootstrapper {
 
 interface GuardianAuthClient {
   suspend fun bootstrapGuardian(request: GuardianBootstrapRequest): GuardianBootstrapResult
+
+  suspend fun requestGuardianDeviceRetirement(
+    guardianInstallationId: String,
+  ): GuardianDeviceRetirementResult
 }
+
+enum class GuardianDeviceRetirementResult { Completed, RetryableFailure }
 
 interface GuardianLocalStateRepository {
   suspend fun getOrCreateInstallationId(generate: () -> String): String
+
+  suspend fun getPendingRetirementInstallationId(): String?
+
+  suspend fun getPendingLogoutAuthSessionKey(): String?
+
+  suspend fun beginDeviceRetirement(installationId: String, authSessionKey: String): Boolean
+
+  suspend fun markDeviceRetiredAwaitingSessionEnd(): Boolean
+
+  suspend fun isSessionEndPending(): Boolean
+
+  suspend fun completeLogout(): Boolean
 
   suspend fun getBootstrapState(): StoredGuardianBootstrapState?
 

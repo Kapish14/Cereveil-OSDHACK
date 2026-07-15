@@ -16,6 +16,50 @@ class SharedPreferencesGuardianLocalStateRepository(context: Context) : Guardian
     return generated
   }
 
+  override suspend fun getPendingRetirementInstallationId(): String? =
+    preferences.getString(KEY_PENDING_RETIREMENT_INSTALLATION_ID, null)?.takeIf(String::isNotBlank)
+
+  override suspend fun getPendingLogoutAuthSessionKey(): String? =
+    preferences.getString(KEY_PENDING_LOGOUT_AUTH_SESSION_KEY, null)?.takeIf(String::isNotBlank)
+
+  override suspend fun beginDeviceRetirement(installationId: String, authSessionKey: String): Boolean =
+    preferences.edit()
+      .putString(KEY_PENDING_RETIREMENT_INSTALLATION_ID, installationId)
+      .putString(KEY_PENDING_LOGOUT_AUTH_SESSION_KEY, authSessionKey)
+      .commit()
+
+  override suspend fun markDeviceRetiredAwaitingSessionEnd(): Boolean =
+    preferences.edit()
+      .remove(KEY_INSTALLATION_ID)
+      .remove(KEY_PENDING_RETIREMENT_INSTALLATION_ID)
+      .putBoolean(KEY_SESSION_END_PENDING, true)
+      .remove(KEY_BOOTSTRAP_AUTH_SESSION_KEY)
+      .remove(KEY_GUARDIAN_ACCOUNT_ID)
+      .remove(KEY_HOUSEHOLD_ID)
+      .remove(KEY_GUARDIAN_DEVICE_ID)
+      .remove(KEY_GUARDIAN_DEVICE_STATUS)
+      .remove(KEY_HAS_CHILD_PROFILES)
+      .remove(KEY_SERVER_NOW)
+      .commit()
+
+  override suspend fun isSessionEndPending(): Boolean =
+    preferences.getBoolean(KEY_SESSION_END_PENDING, false)
+
+  override suspend fun completeLogout(): Boolean =
+    preferences.edit()
+      .remove(KEY_INSTALLATION_ID)
+      .remove(KEY_PENDING_RETIREMENT_INSTALLATION_ID)
+      .remove(KEY_PENDING_LOGOUT_AUTH_SESSION_KEY)
+      .remove(KEY_SESSION_END_PENDING)
+      .remove(KEY_BOOTSTRAP_AUTH_SESSION_KEY)
+      .remove(KEY_GUARDIAN_ACCOUNT_ID)
+      .remove(KEY_HOUSEHOLD_ID)
+      .remove(KEY_GUARDIAN_DEVICE_ID)
+      .remove(KEY_GUARDIAN_DEVICE_STATUS)
+      .remove(KEY_HAS_CHILD_PROFILES)
+      .remove(KEY_SERVER_NOW)
+      .commit()
+
   override suspend fun getBootstrapState(): StoredGuardianBootstrapState? {
     val authSessionKey = preferences.getString(KEY_BOOTSTRAP_AUTH_SESSION_KEY, null) ?: return null
     val guardianAccountId = preferences.getString(KEY_GUARDIAN_ACCOUNT_ID, null) ?: return null
@@ -64,6 +108,9 @@ class SharedPreferencesGuardianLocalStateRepository(context: Context) : Guardian
   private companion object {
     const val PREFERENCES_NAME = "guardian_auth_bootstrap"
     const val KEY_INSTALLATION_ID = "guardianInstallationId"
+    const val KEY_PENDING_RETIREMENT_INSTALLATION_ID = "pendingRetirementInstallationId"
+    const val KEY_PENDING_LOGOUT_AUTH_SESSION_KEY = "pendingLogoutAuthSessionKey"
+    const val KEY_SESSION_END_PENDING = "sessionEndPending"
     const val KEY_BOOTSTRAP_AUTH_SESSION_KEY = "bootstrapAuthSessionKey"
     const val KEY_GUARDIAN_ACCOUNT_ID = "guardianAccountId"
     const val KEY_HOUSEHOLD_ID = "householdId"

@@ -8,6 +8,7 @@ import { base64UrlDecode, base64UrlEncode } from "./lib/encoding";
 
 const modules = import.meta.glob("./**/*.ts");
 const bootstrapGuardian = api.modules.guardianAuth.public.bootstrapGuardian;
+const retireGuardianDevice = api.modules.guardianAuth.public.retireGuardianDevice;
 const createChildProfile = api.modules.childProfiles.public.createChildProfile;
 const createEnrollmentCode = api.modules.deviceIdentity.guardian.createEnrollmentCode;
 const cancelEnrollmentCode = api.modules.deviceIdentity.guardian.cancelEnrollmentCode;
@@ -83,6 +84,78 @@ async function expectAppError(promise: Promise<unknown>, code: string) {
     data: expect.objectContaining({ code }),
   });
 }
+
+describe("Guardian Device logout", () => {
+  test("retires the authenticated installation and its active FCM token", async () => {
+    const t = backend();
+    const bootstrap = await t.withIdentity(identity).mutation(bootstrapGuardian, bootstrapArgs);
+    await t.run(async (ctx: MutationCtx) => {
+      for (let index = 0; index < 11; index += 1) {
+        await ctx.db.insert("fcmTokens", {
+          ownerKind: "guardianDevice",
+          ownerId: bootstrap.guardianDeviceId,
+          householdId: bootstrap.householdId,
+          tokenHash: `old-guardian-token-hash-${index}`,
+          encryptedToken: `old-guardian-token-ciphertext-${index}`,
+          platform: "android",
+          environment: "dev",
+          status: "revoked",
+          registeredAt: 1,
+          lastSeenAt: 1,
+          invalidatedAt: 2,
+        });
+      }
+      await ctx.db.insert("fcmTokens", {
+        ownerKind: "guardianDevice",
+        ownerId: bootstrap.guardianDeviceId,
+        householdId: bootstrap.householdId,
+        tokenHash: "guardian-token-hash",
+        encryptedToken: "guardian-token-ciphertext",
+        platform: "android",
+        environment: "dev",
+        status: "active",
+        registeredAt: 1,
+        lastSeenAt: 1,
+      });
+    });
+
+    expect(await t.withIdentity(identity).mutation(retireGuardianDevice, {
+      guardianInstallationId: bootstrapArgs.guardianInstallationId,
+    })).toMatchObject({ retired: true });
+
+    const state = await t.run(async (ctx: MutationCtx) => ({
+      device: await ctx.db.get(bootstrap.guardianDeviceId),
+      tokens: await ctx.db
+        .query("fcmTokens")
+        .withIndex("by_owner_kind_and_owner_id", (q) =>
+          q.eq("ownerKind", "guardianDevice").eq("ownerId", bootstrap.guardianDeviceId),
+        )
+        .take(20),
+    }));
+    expect(state.device).toMatchObject({ status: "revoked", revokedAt: expect.any(Number) });
+    expect(state.tokens).toHaveLength(12);
+    expect(state.tokens.at(-1)).toMatchObject({
+      tokenHash: "guardian-token-hash",
+      status: "revoked",
+      invalidatedAt: expect.any(Number),
+    });
+    expect(await t.withIdentity(identity).mutation(retireGuardianDevice, {
+      guardianInstallationId: bootstrapArgs.guardianInstallationId,
+    })).toMatchObject({ retired: true });
+  });
+
+  test("cannot retire another Guardian Account's installation", async () => {
+    const t = backend();
+    const bootstrap = await t.withIdentity(identity).mutation(bootstrapGuardian, bootstrapArgs);
+
+    expect(await t.withIdentity({ ...identity, tokenIdentifier: "other-account" }).mutation(
+      retireGuardianDevice,
+      { guardianInstallationId: bootstrapArgs.guardianInstallationId },
+    )).toMatchObject({ retired: false });
+    expect(await t.run(async (ctx: MutationCtx) => ctx.db.get(bootstrap.guardianDeviceId)))
+      .toMatchObject({ status: "active" });
+  });
+});
 
 describe("Guardian Enrollment Code lifecycle", () => {
   test("creates a five-minute QR code while storing only its hash", async () => {

@@ -3,6 +3,7 @@ package com.cereveil.guardian.auth
 import java.net.HttpURLConnection
 import java.net.URL
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -12,6 +13,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 
 internal const val BOOTSTRAP_GUARDIAN_FUNCTION_PATH = "modules/guardianAuth/public:bootstrapGuardian"
+internal const val RETIRE_GUARDIAN_DEVICE_FUNCTION_PATH = "modules/guardianAuth/public:retireGuardianDevice"
 
 class ConvexGuardianAuthClient(
   convexUrl: String,
@@ -53,6 +55,45 @@ class ConvexGuardianAuthClient(
         GuardianBootstrapResult.Success(response["value"]!!.jsonObject.toGuardianBootstrapState())
       } catch (_: Exception) {
         GuardianBootstrapResult.Failure(GuardianBootstrapError.Retryable)
+      }
+    }
+
+  override suspend fun requestGuardianDeviceRetirement(
+    guardianInstallationId: String,
+  ): GuardianDeviceRetirementResult =
+    withContext(Dispatchers.IO) {
+      val token = accessToken() ?: return@withContext GuardianDeviceRetirementResult.RetryableFailure
+      try {
+        val connection = URL("$deploymentUrl/api/mutation").openConnection() as HttpURLConnection
+        connection.requestMethod = "POST"
+        connection.connectTimeout = 10_000
+        connection.readTimeout = 15_000
+        connection.doOutput = true
+        connection.setRequestProperty("accept", "application/json")
+        connection.setRequestProperty("content-type", "application/json")
+        connection.setRequestProperty("authorization", "Bearer $token")
+        val body = buildJsonObject {
+          put("path", RETIRE_GUARDIAN_DEVICE_FUNCTION_PATH)
+          put("format", "json")
+          put("args", buildJsonObject { put("guardianInstallationId", guardianInstallationId) })
+        }
+        connection.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
+        val stream = if (connection.responseCode in 200..299) connection.inputStream else connection.errorStream
+        val envelope = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
+        val response = Json.parseToJsonElement(envelope).jsonObject
+        if (
+          connection.responseCode in 200..299 &&
+          response.string("status") == "success" &&
+          response["value"]?.jsonObject?.get("retired")?.jsonPrimitive?.content == "true"
+        ) {
+          GuardianDeviceRetirementResult.Completed
+        } else {
+          GuardianDeviceRetirementResult.RetryableFailure
+        }
+      } catch (error: CancellationException) {
+        throw error
+      } catch (_: Exception) {
+        GuardianDeviceRetirementResult.RetryableFailure
       }
     }
 

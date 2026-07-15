@@ -10,7 +10,11 @@ import {
   loadGuardianAccountByTokenIdentifier,
   loadGuardianDeviceByInstallation,
 } from "./data";
-import { normalizeTimezone, validateBootstrapGuardianArgs } from "./validators";
+import {
+  normalizeTimezone,
+  validateBootstrapGuardianArgs,
+  validateRetireGuardianDeviceArgs,
+} from "./validators";
 
 type BootstrapGuardianArgs = {
   guardianInstallationId: string;
@@ -54,6 +58,44 @@ export async function bootstrapGuardian(
     hasChildProfiles: await hasActiveChildProfiles(ctx, householdId),
     serverNow,
   };
+}
+
+export async function retireGuardianDevice(
+  ctx: MutationCtx,
+  identity: UserIdentity,
+  args: { guardianInstallationId: string },
+  serverNow: number,
+) {
+  validateRetireGuardianDeviceArgs(args);
+  const guardianAccount = await loadGuardianAccountByTokenIdentifier(ctx, identity.tokenIdentifier);
+  if (guardianAccount === null) return { retired: false, serverNow };
+
+  const device = await loadGuardianDeviceByInstallation(
+    ctx,
+    guardianAccount._id,
+    args.guardianInstallationId,
+  );
+  if (device === null) return { retired: false, serverNow };
+  if (device.status === "revoked") return { retired: true, serverNow };
+
+  await ctx.db.patch("guardianDevices", device._id, {
+    status: "revoked",
+    revokedAt: serverNow,
+    updatedAt: serverNow,
+  });
+  const tokens = ctx.db
+    .query("fcmTokens")
+    .withIndex("by_owner_kind_and_owner_id", (q) =>
+      q.eq("ownerKind", "guardianDevice").eq("ownerId", device._id),
+    );
+  for await (const token of tokens) {
+    if (token.status !== "active") continue;
+    await ctx.db.patch("fcmTokens", token._id, {
+      status: "revoked",
+      invalidatedAt: serverNow,
+    });
+  }
+  return { retired: true, serverNow };
 }
 
 async function findOrCreateGuardianAccount(

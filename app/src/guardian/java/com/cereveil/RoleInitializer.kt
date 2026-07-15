@@ -14,6 +14,7 @@ import com.clerk.api.session.Session
 import com.clerk.api.session.Session.SessionStatus
 import com.cereveil.guardian.auth.GuardianAuthSessionProvider
 import com.cereveil.guardian.auth.GuardianAuthState
+import com.cereveil.guardian.auth.guardianAuthSessionKey
 import com.cereveil.guardian.auth.resolveGuardianAuthState
 import com.cereveil.guardian.auth.stableAuthStates
 import com.cereveil.guardian.messaging.GuardianPushTokenRegistrar
@@ -97,6 +98,12 @@ object RoleInitializer {
       is ClerkResult.Success -> result.value
       is ClerkResult.Failure -> null
     }
+
+  suspend fun signOutGuardian(): Boolean =
+    when (Clerk.auth.signOut()) {
+      is ClerkResult.Success -> true
+      is ClerkResult.Failure -> false
+    }
 }
 
 private class ClerkGuardianAuthSessionProvider(context: Context) : GuardianAuthSessionProvider {
@@ -106,7 +113,13 @@ private class ClerkGuardianAuthSessionProvider(context: Context) : GuardianAuthS
     Clerk.isInitialized
       .combine(Clerk.initializationError) { initialized, error -> initialized to error }
       .combine(
-        Clerk.userFlow.combine(Clerk.sessionFlow) { user, session -> user?.id ?: session?.id },
+        Clerk.userFlow.combine(Clerk.sessionFlow) { user, session ->
+          guardianAuthSessionKey(
+            clerkUserId = user?.id,
+            clerkSessionId = session?.id,
+            sessionIsActive = session?.status == SessionStatus.ACTIVE,
+          )
+        },
       ) { readiness, authSessionKey -> readiness to authSessionKey }
       .combine(context.validatedInternetFlow()) { (readiness, authSessionKey), internetAvailable ->
         val (initialized, error) = readiness
@@ -124,7 +137,11 @@ private class ClerkGuardianAuthSessionProvider(context: Context) : GuardianAuthS
     val immediate = resolveGuardianAuthState(
       clerkInitialized = Clerk.isInitialized.value,
       clerkInitializationFailed = Clerk.initializationError.value != null,
-      authSessionKey = Clerk.user?.id ?: Clerk.session?.id,
+      authSessionKey = guardianAuthSessionKey(
+        clerkUserId = Clerk.user?.id,
+        clerkSessionId = Clerk.session?.id,
+        sessionIsActive = Clerk.session?.status == SessionStatus.ACTIVE,
+      ),
       internetAvailable = context.hasValidatedInternet(),
     )
     if (immediate != null) return immediate
@@ -135,7 +152,11 @@ private class ClerkGuardianAuthSessionProvider(context: Context) : GuardianAuthS
     return requireNotNull(resolveGuardianAuthState(
       clerkInitialized = readiness.first,
       clerkInitializationFailed = readiness.second != null,
-      authSessionKey = Clerk.user?.id ?: Clerk.session?.id,
+      authSessionKey = guardianAuthSessionKey(
+        clerkUserId = Clerk.user?.id,
+        clerkSessionId = Clerk.session?.id,
+        sessionIsActive = Clerk.session?.status == SessionStatus.ACTIVE,
+      ),
       internetAvailable = context.hasValidatedInternet(),
     ))
   }

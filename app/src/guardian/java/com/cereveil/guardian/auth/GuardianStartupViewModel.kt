@@ -12,6 +12,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.CancellationException
 
 class GuardianStartupViewModel(application: Application) : AndroidViewModel(application) {
   private val authSessionProvider = RoleInitializer.guardianAuthSessionProvider(application)
@@ -27,6 +28,7 @@ class GuardianStartupViewModel(application: Application) : AndroidViewModel(appl
           versionCode = BuildConfig.VERSION_CODE.toLong(),
         ),
       authClient = ConvexGuardianAuthClient(BuildConfig.CONVEX_URL, RoleInitializer::guardianConvexToken),
+      endAuthSession = RoleInitializer::signOutGuardian,
     )
 
   private val mutableRoute = MutableStateFlow(GuardianStartupRoute.Loading)
@@ -34,6 +36,12 @@ class GuardianStartupViewModel(application: Application) : AndroidViewModel(appl
 
   private val mutableSetupAuthSessionKey = MutableStateFlow<String?>(null)
   val setupAuthSessionKey: StateFlow<String?> = mutableSetupAuthSessionKey.asStateFlow()
+
+  private val mutableSignOutInProgress = MutableStateFlow(false)
+  val signOutInProgress: StateFlow<Boolean> = mutableSignOutInProgress.asStateFlow()
+
+  private val mutableSignOutFailed = MutableStateFlow(false)
+  val signOutFailed: StateFlow<Boolean> = mutableSignOutFailed.asStateFlow()
 
   init {
     viewModelScope.launch {
@@ -51,6 +59,25 @@ class GuardianStartupViewModel(application: Application) : AndroidViewModel(appl
     viewModelScope.launch {
       mutableRoute.value = GuardianStartupRoute.Loading
       mutableRoute.value = coordinator.retry()
+    }
+  }
+
+  fun signOut() {
+    if (mutableSignOutInProgress.value) return
+    viewModelScope.launch {
+      mutableSignOutInProgress.value = true
+      mutableSignOutFailed.value = false
+      try {
+        val nextRoute = coordinator.signOut()
+        mutableSignOutFailed.value = nextRoute != GuardianStartupRoute.Auth
+        mutableRoute.value = nextRoute
+      } catch (error: CancellationException) {
+        throw error
+      } catch (_: Exception) {
+        mutableSignOutFailed.value = true
+      } finally {
+        mutableSignOutInProgress.value = false
+      }
     }
   }
 

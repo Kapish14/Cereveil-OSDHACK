@@ -1,6 +1,7 @@
 package com.cereveil.guardian.auth
 
 import java.util.UUID
+import kotlinx.coroutines.CancellationException
 
 class GuardianBootstrapCoordinator(
   private val authSessionProvider: GuardianAuthSessionProvider,
@@ -8,6 +9,7 @@ class GuardianBootstrapCoordinator(
   private val metadataProvider: GuardianInstallationMetadataProvider,
   private val authClient: GuardianAuthClient,
   private val generateInstallationId: () -> String = { UUID.randomUUID().toString() },
+  private val endAuthSession: suspend () -> Boolean = { true },
 ) {
   var canRetry: Boolean = false
     private set
@@ -19,12 +21,29 @@ class GuardianBootstrapCoordinator(
 
     val authState = authSessionProvider.currentState()
     when (authState) {
-      GuardianAuthState.Unauthenticated -> return remember(GuardianStartupRoute.Auth)
+      GuardianAuthState.Unauthenticated -> {
+        if (localStateRepository.isSessionEndPending()) localStateRepository.completeLogout()
+        return remember(GuardianStartupRoute.Auth)
+      }
       GuardianAuthState.TemporarilyUnavailable -> {
         canRetry = true
         return remember(GuardianStartupRoute.RetryableError)
       }
       is GuardianAuthState.Authenticated -> Unit
+    }
+
+    val pendingLogoutAuthSessionKey = localStateRepository.getPendingLogoutAuthSessionKey()
+    if (pendingLogoutAuthSessionKey != null && pendingLogoutAuthSessionKey != authState.authSessionKey) {
+      if (!localStateRepository.completeLogout()) {
+        canRetry = true
+        return remember(GuardianStartupRoute.RetryableError)
+      }
+    }
+    if (
+      localStateRepository.getPendingRetirementInstallationId() != null ||
+      localStateRepository.isSessionEndPending()
+    ) {
+      return remember(finishPendingLogout(GuardianStartupRoute.RetryableError))
     }
 
     val storedState = localStateRepository.getBootstrapState()
@@ -56,9 +75,53 @@ class GuardianBootstrapCoordinator(
     return start()
   }
 
-  suspend fun signOut() {
+  suspend fun signOut(): GuardianStartupRoute {
     canRetry = false
-    localStateRepository.clearBootstrapState()
+    val authState = authSessionProvider.currentState()
+    if (authState !is GuardianAuthState.Authenticated) {
+      localStateRepository.completeLogout()
+      return remember(GuardianStartupRoute.Auth)
+    }
+    val installationId = localStateRepository.getOrCreateInstallationId(generateInstallationId)
+    if (!localStateRepository.beginDeviceRetirement(installationId, authState.authSessionKey)) return lastRoute
+    return remember(finishPendingLogout(lastRoute))
+  }
+
+  private suspend fun finishPendingLogout(failureRoute: GuardianStartupRoute): GuardianStartupRoute {
+    val installationId = localStateRepository.getPendingRetirementInstallationId()
+    if (installationId != null) {
+      val retirement = try {
+        authClient.requestGuardianDeviceRetirement(installationId)
+      } catch (error: CancellationException) {
+        throw error
+      } catch (_: Exception) {
+        GuardianDeviceRetirementResult.RetryableFailure
+      }
+      if (retirement != GuardianDeviceRetirementResult.Completed) {
+        canRetry = true
+        return failureRoute
+      }
+      if (!localStateRepository.markDeviceRetiredAwaitingSessionEnd()) {
+        canRetry = true
+        return failureRoute
+      }
+    }
+    val sessionEnded = try {
+      endAuthSession()
+    } catch (error: CancellationException) {
+      throw error
+    } catch (_: Exception) {
+      false
+    }
+    if (!sessionEnded) {
+      canRetry = true
+      return failureRoute
+    }
+    if (!localStateRepository.completeLogout()) {
+      canRetry = true
+      return failureRoute
+    }
+    return GuardianStartupRoute.Auth
   }
 
   private fun routeFor(state: GuardianBootstrapState): GuardianStartupRoute =

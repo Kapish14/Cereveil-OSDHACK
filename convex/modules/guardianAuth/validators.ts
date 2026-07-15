@@ -8,6 +8,10 @@ export const bootstrapGuardianArgs = {
   timezone: v.optional(v.string()),
 };
 
+export const retireGuardianDeviceArgs = {
+  guardianInstallationId: v.string(),
+};
+
 export function requireBoundedString(
   value: string,
   fieldName: string,
@@ -38,6 +42,10 @@ export function validateBootstrapGuardianArgs(args: {
   if (args.timezone !== undefined) {
     requireBoundedString(args.timezone, "timezone", 1, 128);
   }
+}
+
+export function validateRetireGuardianDeviceArgs(args: { guardianInstallationId: string }) {
+  requireBoundedString(args.guardianInstallationId, "guardianInstallationId", 16, 128);
 }
 
 export function normalizeTimezone(timezone?: string): string {

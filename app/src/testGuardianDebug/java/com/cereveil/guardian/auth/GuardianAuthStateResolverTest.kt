@@ -6,6 +6,18 @@ import org.junit.Test
 
 class GuardianAuthStateResolverTest {
   @Test
+  fun staleClerkUserWithoutAnActiveSessionDoesNotAuthenticateAfterLogout() {
+    assertEquals(
+      null,
+      guardianAuthSessionKey(
+        clerkUserId = "cached-guardian-user",
+        clerkSessionId = null,
+        sessionIsActive = false,
+      ),
+    )
+  }
+
+  @Test
   fun offlineWithoutRestoredSessionIsUnavailableInsteadOfSignedOut() {
     assertEquals(
       GuardianAuthState.TemporarilyUnavailable,

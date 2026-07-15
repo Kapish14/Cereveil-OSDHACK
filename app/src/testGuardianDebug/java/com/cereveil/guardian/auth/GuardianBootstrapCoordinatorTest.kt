@@ -77,16 +77,120 @@ class GuardianBootstrapCoordinatorTest {
   }
 
   @Test
-  fun signOutClearsBootstrapStateButKeepsInstallationId() = runTest {
+  fun signOutRetiresTheSessionAndNextLoginUsesAFreshInstallationId() = runTest {
     val harness = Harness(existingInstallationId = "same-installation-id")
     harness.repository.bootstrapState = bootstrapState(hasChildProfiles = true)
     harness.repository.bootstrapAuthSessionKey = "clerk-user-1"
 
-    harness.coordinator.signOut()
+    assertEquals(GuardianStartupRoute.Auth, harness.coordinator.signOut())
 
-    assertEquals("same-installation-id", harness.repository.installationId)
+    assertNull(harness.repository.installationId)
     assertNull(harness.repository.bootstrapState)
     assertNull(harness.repository.bootstrapAuthSessionKey)
+    assertEquals(1, harness.retireAttempts)
+    assertEquals(1, harness.signOutAttempts)
+
+    assertEquals(GuardianStartupRoute.Setup, harness.coordinator.start())
+    assertEquals("generated-installation-id", harness.client.requests.last().guardianInstallationId)
+  }
+
+  @Test
+  fun failedSessionSignOutKeepsARecoveryMarkerAfterDeviceRetirement() = runTest {
+    val harness = Harness(
+      bootstrapError = GuardianBootstrapError.DeviceLimitReached,
+      sessionSignOutSucceeds = false,
+    )
+    assertEquals(GuardianStartupRoute.DeviceLimitReached, harness.coordinator.start())
+    harness.repository.bootstrapState = bootstrapState(hasChildProfiles = true)
+    harness.repository.bootstrapAuthSessionKey = "clerk-user-1"
+    assertEquals(GuardianStartupRoute.DeviceLimitReached, harness.coordinator.signOut())
+
+    assertNull(harness.repository.installationId)
+    assertNull(harness.repository.bootstrapState)
+    assertNull(harness.repository.bootstrapAuthSessionKey)
+    assertTrue(harness.repository.sessionEndPending)
+    assertEquals(1, harness.retireAttempts)
+    assertEquals(1, harness.signOutAttempts)
+
+    harness.clerkSessionSignOutSucceeds = true
+    assertEquals(GuardianStartupRoute.Auth, harness.coordinator.start())
+    assertFalse(harness.repository.sessionEndPending)
+    assertEquals(2, harness.signOutAttempts)
+  }
+
+  @Test
+  fun failedDeviceRetirementDoesNotEndTheClerkSession() = runTest {
+    val harness = Harness(existingInstallationId = "existing-installation-id", deviceRetireSucceeds = false)
+
+    assertEquals(GuardianStartupRoute.Setup, harness.coordinator.start())
+    assertEquals(GuardianStartupRoute.Setup, harness.coordinator.signOut())
+
+    assertEquals(1, harness.retireAttempts)
+    assertEquals(0, harness.signOutAttempts)
+    assertEquals("existing-installation-id", harness.repository.installationId)
+    assertEquals("existing-installation-id", harness.repository.pendingRetirementInstallationId)
+  }
+
+  @Test
+  fun startupResumesRetirementInterruptedByProcessDeathBeforeBootstrapping() = runTest {
+    val harness = Harness(existingInstallationId = "existing-installation-id")
+    harness.repository.pendingRetirementInstallationId = "existing-installation-id"
+    harness.repository.pendingLogoutAuthSessionKey = "clerk-user-1"
+    harness.repository.bootstrapState = bootstrapState(hasChildProfiles = true)
+    harness.repository.bootstrapAuthSessionKey = "clerk-user-1"
+
+    assertEquals(GuardianStartupRoute.Auth, harness.coordinator.start())
+
+    assertEquals(1, harness.retireAttempts)
+    assertEquals(1, harness.signOutAttempts)
+    assertNull(harness.repository.installationId)
+    assertNull(harness.repository.bootstrapState)
+    assertFalse(harness.repository.sessionEndPending)
+  }
+
+  @Test
+  fun differentAccountAbandonsAnInterruptedLogoutWithoutRetiringOrSigningItOut() = runTest {
+    val harness = Harness(
+      authState = GuardianAuthState.Authenticated("clerk-user-2"),
+      existingInstallationId = "old-account-installation-id",
+    )
+    harness.repository.pendingRetirementInstallationId = "old-account-installation-id"
+    harness.repository.pendingLogoutAuthSessionKey = "clerk-user-1"
+    harness.repository.bootstrapState = bootstrapState(hasChildProfiles = true)
+    harness.repository.bootstrapAuthSessionKey = "clerk-user-1"
+
+    assertEquals(GuardianStartupRoute.Setup, harness.coordinator.start())
+
+    assertEquals(0, harness.retireAttempts)
+    assertEquals(0, harness.signOutAttempts)
+    assertNull(harness.repository.pendingRetirementInstallationId)
+    assertNull(harness.repository.pendingLogoutAuthSessionKey)
+    assertEquals("generated-installation-id", harness.client.requests.single().guardianInstallationId)
+  }
+
+  @Test
+  fun revokedDeviceCanStillFinishLogoutAfterAPriorClerkFailure() = runTest {
+    val harness = Harness(bootstrapError = GuardianBootstrapError.DeviceRevoked)
+
+    assertEquals(GuardianStartupRoute.DeviceRevoked, harness.coordinator.start())
+    assertEquals(GuardianStartupRoute.Auth, harness.coordinator.signOut())
+
+    assertEquals(1, harness.retireAttempts)
+    assertEquals(1, harness.signOutAttempts)
+  }
+
+  @Test
+  fun thrownClerkFailureKeepsTheCurrentRouteRetryable() = runTest {
+    val harness = Harness(
+      bootstrapError = GuardianBootstrapError.DeviceRevoked,
+      sessionSignOutThrows = true,
+    )
+
+    assertEquals(GuardianStartupRoute.DeviceRevoked, harness.coordinator.start())
+    assertEquals(GuardianStartupRoute.DeviceRevoked, harness.coordinator.signOut())
+
+    assertEquals(1, harness.retireAttempts)
+    assertEquals(1, harness.signOutAttempts)
   }
 
   @Test
@@ -153,9 +257,21 @@ class GuardianBootstrapCoordinatorTest {
     existingInstallationId: String? = null,
     bootstrapResult: GuardianBootstrapState = bootstrapState(hasChildProfiles = false),
     bootstrapError: GuardianBootstrapError? = null,
+    sessionSignOutSucceeds: Boolean = true,
+    deviceRetireSucceeds: Boolean = true,
+    sessionSignOutThrows: Boolean = false,
   ) {
     val repository = InMemoryGuardianLocalStateRepository(existingInstallationId)
     val client = FakeGuardianAuthClient(bootstrapResult, bootstrapError)
+    var retireAttempts = 0
+    init {
+      client.retireResult =
+        if (deviceRetireSucceeds) GuardianDeviceRetirementResult.Completed
+        else GuardianDeviceRetirementResult.RetryableFailure
+      client.onRetire = { retireAttempts += 1 }
+    }
+    var signOutAttempts = 0
+    var clerkSessionSignOutSucceeds = sessionSignOutSucceeds
     val coordinator =
       GuardianBootstrapCoordinator(
         authSessionProvider = FakeGuardianAuthSessionProvider(authState),
@@ -163,6 +279,11 @@ class GuardianBootstrapCoordinatorTest {
         metadataProvider = FakeGuardianInstallationMetadataProvider(),
         authClient = client,
         generateInstallationId = { "generated-installation-id" },
+        endAuthSession = {
+          signOutAttempts += 1
+          if (sessionSignOutThrows) error("Clerk sign-out failed")
+          clerkSessionSignOutSucceeds
+        },
       )
   }
 
@@ -186,6 +307,8 @@ class GuardianBootstrapCoordinatorTest {
     var bootstrapError: GuardianBootstrapError?,
   ) : GuardianAuthClient {
     val requests = mutableListOf<GuardianBootstrapRequest>()
+    var retireResult = GuardianDeviceRetirementResult.Completed
+    var onRetire: () -> Unit = {}
 
     override suspend fun bootstrapGuardian(
       request: GuardianBootstrapRequest
@@ -194,11 +317,21 @@ class GuardianBootstrapCoordinatorTest {
       return bootstrapError?.let { GuardianBootstrapResult.Failure(it) }
         ?: GuardianBootstrapResult.Success(bootstrapResult)
     }
+
+    override suspend fun requestGuardianDeviceRetirement(
+      guardianInstallationId: String,
+    ): GuardianDeviceRetirementResult {
+      onRetire()
+      return retireResult
+    }
   }
 
   private class InMemoryGuardianLocalStateRepository(initialInstallationId: String? = null) :
     GuardianLocalStateRepository {
     var installationId: String? = initialInstallationId
+    var pendingRetirementInstallationId: String? = null
+    var pendingLogoutAuthSessionKey: String? = null
+    var sessionEndPending = false
     var bootstrapState: GuardianBootstrapState? = null
     var bootstrapAuthSessionKey: String? = null
 
@@ -209,6 +342,37 @@ class GuardianBootstrapCoordinatorTest {
       val generated = generate()
       installationId = generated
       return generated
+    }
+
+    override suspend fun getPendingRetirementInstallationId() = pendingRetirementInstallationId
+
+    override suspend fun getPendingLogoutAuthSessionKey() = pendingLogoutAuthSessionKey
+
+    override suspend fun beginDeviceRetirement(installationId: String, authSessionKey: String): Boolean {
+      pendingRetirementInstallationId = installationId
+      pendingLogoutAuthSessionKey = authSessionKey
+      return true
+    }
+
+    override suspend fun markDeviceRetiredAwaitingSessionEnd(): Boolean {
+      installationId = null
+      pendingRetirementInstallationId = null
+      sessionEndPending = true
+      bootstrapState = null
+      bootstrapAuthSessionKey = null
+      return true
+    }
+
+    override suspend fun isSessionEndPending() = sessionEndPending
+
+    override suspend fun completeLogout(): Boolean {
+      installationId = null
+      pendingRetirementInstallationId = null
+      pendingLogoutAuthSessionKey = null
+      sessionEndPending = false
+      bootstrapState = null
+      bootstrapAuthSessionKey = null
+      return true
     }
 
     override suspend fun getBootstrapState(): StoredGuardianBootstrapState? {
