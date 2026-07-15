@@ -161,18 +161,18 @@ npm run convex:dev
 
 ### Download the ready-to-install APKs
 
-Ready-to-install APKs are kept in [`apks/`](apks/):
+Download the current demo builds from the [latest GitHub Release](https://github.com/Kapish14/Cereveil/releases/latest):
 
-- [`Cereveil-Guardian.apk`](apks/Cereveil-Guardian.apk)
-- [`Cereveil-Child.apk`](apks/Cereveil-Child.apk)
+- [Cereveil Guardian Mode build](https://github.com/Kapish14/Cereveil/releases/latest/download/Cereveil-Guardian.apk)
+- [Cereveil Child Mode build](https://github.com/Kapish14/Cereveil/releases/latest/download/Cereveil-Child.apk)
 
-These are debug-signed role builds for the project demo. They use the development package names above and keep the development-only Local AI experience available. Git LFS is required when cloning the repository so the APK contents are downloaded instead of only their pointer files.
+These are debug-signed role builds for the project demo. They use the development package names above and keep the development-only Local AI experience available. They are not Play Store release artifacts.
 
-Install them on separate Android devices by downloading each APK and allowing installation from that source, or use ADB:
+Install them on separate Android devices by downloading each APK and allowing installation from that source. You can also install downloaded files with ADB:
 
 ```bash
-adb -s <guardian-serial> install -r apks/Cereveil-Guardian.apk
-adb -s <child-serial> install -r apks/Cereveil-Child.apk
+adb -s <guardian-serial> install -r Cereveil-Guardian.apk
+adb -s <child-serial> install -r Cereveil-Child.apk
 ```
 
 ### Rebuild the APKs
@@ -183,10 +183,17 @@ Build the two debug APKs from `main`:
 npm run android:assemble
 ```
 
-To rebuild and refresh the stable files in `apks/` after an app change:
+To rebuild and stage the stable release assets after an app change:
 
 ```bash
 npm run android:stage-apks
+```
+
+The staged release assets are written to:
+
+```text
+app/build/outputs/hackathon/Cereveil-Guardian.apk
+app/build/outputs/hackathon/Cereveil-Child.apk
 ```
 
 The outputs are:

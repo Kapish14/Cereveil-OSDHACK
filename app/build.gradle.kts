@@ -161,7 +161,7 @@ dependencies {
 
 tasks.register<Copy>("stageHackathonApks") {
   group = "distribution"
-  description = "Builds and stages the installable Guardian and Child hackathon APKs."
+  description = "Builds and stages the Guardian Mode and Child Mode APKs for a GitHub Release."
 
   dependsOn("assembleGuardianDebug", "assembleChildDebug")
 
@@ -171,5 +171,5 @@ tasks.register<Copy>("stageHackathonApks") {
   from(layout.buildDirectory.file("outputs/apk/child/debug/app-child-debug.apk")) {
     rename { "Cereveil-Child.apk" }
   }
-  into(rootProject.layout.projectDirectory.dir("apks"))
+  into(layout.buildDirectory.dir("outputs/hackathon"))
 }
