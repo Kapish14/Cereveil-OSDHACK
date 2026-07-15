@@ -358,7 +358,7 @@ private fun GuardianDashboard(
                   Text("Supervision is paused. Setup must be completed on your child's phone to start protection.")
                   GuardianPrimaryButton(
                     text = "Set up child device",
-                    onClick = { /* TODO: wire action */ }
+                    onClick = { onSetUpChildDevice(profile) }
                   )
                 }
               } else {
