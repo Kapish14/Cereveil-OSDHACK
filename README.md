@@ -2,6 +2,8 @@
 
 > A privacy-first Android family-safety system that helps a Guardian supervise a Child Device with the Child's awareness.
 
+> **Install the demo:** Download the ready-to-install Guardian Mode and Child Mode APKs from the [latest GitHub Release](https://github.com/Kapish14/Cereveil/releases/latest). Install Guardian Mode first, then Child Mode.
+
 Cereveil is a single Android product with two roles: **Guardian Mode** configures protection and reviews current safety state, while **Child Mode** transparently applies that protection on the enrolled phone. The project combines local Android enforcement, a Convex backend, short-lived device identity, and a deliberately narrow on-device AI design.
 
 The product is built around one promise: **sensitive content used for AI safety detection stays on the Child Device**. Visible accessibility text and temporary active-window pixels are classified locally. Raw text, screenshots, OCR, screen recordings, and captured pixels are not uploaded to Convex or exposed to the Guardian.
