@@ -353,7 +353,10 @@ private fun GuardianDashboard(
           when (homeDetail) {
             null -> {
               if (profile.enrollmentStatus == ChildProfileEnrollmentStatus.Unenrolled) {
-                // UI for Connect with Child
+                GuardianCard {
+                  Text("Connect your child's device", style = MaterialTheme.typography.titleLarge)
+                  Text("Supervision is paused. Setup must be completed on your child's phone to start protection.")
+                }
               } else {
                 GuardianProtectionCard(
                   title = if (profile.protectionStatus == GuardianProtectionStatus.FullyProtected) "Protection active"
