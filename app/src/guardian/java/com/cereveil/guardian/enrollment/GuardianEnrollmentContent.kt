@@ -61,6 +61,7 @@ fun GuardianEnrollmentContent(childProfileId: String, childDisplayName: String, 
   }
   val model: GuardianEnrollmentViewModel = viewModel(key = childProfileId, factory = factory)
   val state by model.state.collectAsStateWithLifecycle()
+  LaunchedEffect(model) { model.resumeSetup() }
 
   CereveilScreen {
     CereveilHeader(role = "Guardian", compact = true)
@@ -102,7 +103,8 @@ fun GuardianEnrollmentContent(childProfileId: String, childDisplayName: String, 
       }
       GuardianEnrollmentUiState.Cancelled -> {
         CereveilTitle("Setup paused", "No device was enrolled. You can create a fresh code whenever you are ready.")
-        CereveilPrimaryButton(text = "Back to children", onClick = onBack)
+        CereveilPrimaryButton(text = "Create a fresh code", onClick = model::regenerate)
+        CereveilSecondaryButton(text = "Back to children", onClick = onBack)
       }
       is GuardianEnrollmentUiState.Failure -> {
         CereveilTitle("We couldn’t create the code", "Check your connection, then try again. No Child Device has been changed.")

@@ -41,6 +41,10 @@ class GuardianEnrollmentViewModel(
     }
   }
 
+  fun resumeSetup() {
+    if (mutableState.value == GuardianEnrollmentUiState.Cancelled) regenerate()
+  }
+
   private fun observeEnrollment() {
     viewModelScope.launch {
       client.observeSummary(childProfileId).collect { result ->

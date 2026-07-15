@@ -58,6 +58,22 @@ class GuardianEnrollmentViewModelTest {
   }
 
   @Test
+  fun returningToCancelledSetupCreatesAFreshCode() = runTest(dispatcher) {
+    val client = FakeGuardianEnrollmentClient()
+    val model = GuardianEnrollmentViewModel("child-1", client)
+    advanceUntilIdle()
+
+    model.cancel()
+    advanceUntilIdle()
+    assertEquals(GuardianEnrollmentUiState.Cancelled, model.state.value)
+
+    model.resumeSetup()
+    advanceUntilIdle()
+
+    assertEquals(GuardianEnrollmentUiState.ShowingCode(client.code), model.state.value)
+  }
+
+  @Test
   fun replacementRevokesTheStaleDeviceBeforeStartingFreshEnrollment() = runTest(dispatcher) {
     val client = FakeGuardianEnrollmentClient()
     val model = GuardianDeviceReplacementViewModel("child-1", client)
