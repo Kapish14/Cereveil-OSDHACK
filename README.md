@@ -1,237 +1,65 @@
 # Cereveil
 
-> A privacy-first Android family-safety system that helps a Guardian supervise a Child Device with the Child's awareness.
+> Privacy-first family safety for Android, with scam and NSFW detection running on the Child Device.
 
 > **Install the demo:** Download the ready-to-install Guardian Mode and Child Mode APKs from the [latest GitHub Release](https://github.com/Kapish14/Cereveil/releases/latest). Install Guardian Mode first, then Child Mode.
 
-Cereveil is a single Android product with two roles: **Guardian Mode** configures protection and reviews current safety state, while **Child Mode** transparently applies that protection on the enrolled phone. The project combines local Android enforcement, a Convex backend, short-lived device identity, and a deliberately narrow on-device AI design.
+Cereveil is one product delivered as two fixed-role Android builds from one codebase:
 
-The product is built around one promise: **sensitive content used for AI safety detection stays on the Child Device**. Visible accessibility text and temporary active-window pixels are classified locally. Raw text, screenshots, OCR, screen recordings, and captured pixels are not uploaded to Convex or exposed to the Guardian.
+- **Guardian Mode** lets a Guardian create Child Profiles, enroll a phone, configure protection, review metadata-only safety alerts, request current location and screen time, answer access requests, and start a disclosed live-audio session.
+- **Child Mode** visibly enforces the last applied policy, calculates device signals, and runs both AI detectors locally.
 
-## Contents
+The central privacy boundary is simple: **message text and captured screen pixels used by the AI models never leave the Child Device**. Convex receives only the minimum operational data needed to coordinate supervision.
 
-- [What Cereveil does](#what-cereveil-does)
-- [How it works](#how-it-works)
-- [On-device AI](#on-device-ai)
-- [Tech stack](#tech-stack)
-- [Repository structure](#repository-structure)
-- [Local setup](#local-setup)
-- [Build and run](#build-and-run)
-- [Using the app](#using-the-app)
-- [Testing](#testing)
-- [Privacy and security](#privacy-and-security)
-- [Architecture documentation](#architecture-documentation)
+> Submission scope: this documentation describes the `main` branch at the current commit. Other branches are not part of the submission.
 
-## What Cereveil does
+## Local AI at a glance
 
-Cereveil is designed for a Guardian supervising one or more children aged 8–15. Each Child Profile has at most one active Child Device, and the Guardian Account can be used from at most two active Guardian Devices.
+| Detector | Local input | Model and runtime | Local response | Data sent to Guardian/backend |
+|---|---|---|---|---|
+| Scam text | Visible accessibility text in a selected messaging app | Fine-tuned `ai4bharat/indic-bert`, INT8 ONNX, ONNX Runtime Android | Dismissible scam warning | Type, app package, time, policy version, coarse confidence band |
+| NSFW screen | Temporary screenshot/regions from a selected foreground app | Quantized `Marqo/nsfw-image-detection-384`, INT8 ONNX, ONNX Runtime Android | Content-aligned blur overlay | Type, app package, time, policy version, coarse confidence band |
 
-The main product capabilities are:
+Both models are bundled inside the Child APK and run without a network connection. There is no cloud inference API, remote OCR, screenshot upload, or raw-message upload. Current implementation details and limitations are in [LOCAL_AI_VERIFICATION.md](LOCAL_AI_VERIFICATION.md) and [EVALUATION.md](EVALUATION.md).
 
-- **Visible supervision** — Child Mode remains identifiable and explains when protection is active.
-- **Guided enrollment** — a Guardian creates a minimal Child Profile, completes protection setup with the Child, and pairs the phone using a five-minute, single-use QR code.
-- **App controls** — Guardian-selected manual and scheduled blocks are evaluated on the Child Device. A blocked Child can request temporary access.
-- **Policy-based operation** — versioned, complete policy snapshots are applied atomically, acknowledged by Child Mode, and remain enforceable offline.
-- **Latest location** — the Guardian sees the latest permitted measurement rather than a location history, and can request one fresh measurement.
-- **Current-day screen time** — the Guardian can request Android-calculated, today-so-far per-app totals; raw usage events and history are not uploaded.
-- **On-device AI safety** — Active Screen Safety locally detects visible scam text and NSFW screen content in explicitly selected apps.
-- **Privacy-safe notifications** — Firebase Cloud Messaging (FCM) wakes clients, while Convex remains authoritative. Push payloads do not carry policy bodies or sensitive incident details.
+Active Screen Safety is intentionally exposed only in **debug/development builds** while accessibility screenshot behavior and distribution-policy compliance are validated. Release builds reject policies that enable these detectors.
 
-## How it works
+## Implemented safety slice
 
-### System overview
+- Five-minute, single-use QR enrollment with a non-exportable Android Keystore device key.
+- Versioned policies that are cached and enforced on the Child Device when offline.
+- Manual and scheduled app blocking, with temporary access requests.
+- Latest-only current location; no location history.
+- On-demand, today-so-far per-app screen-time snapshots calculated from Android usage events.
+- On-device scam detection for selected WhatsApp, Google Messages, Samsung Messages, or Cereveil messaging surfaces.
+- On-device NSFW image-region detection and blur for selected foreground apps.
+- Metadata-only Guardian Notices; FCM is only a generic wake-up path.
+- Disclosed, Child-stoppable WebRTC live audio; audio is not recorded and is not relayed through Convex.
+- End Supervision, device replacement, capability-health reporting, and revocable Guardian/Child device authorization.
 
-```mermaid
-flowchart LR
-    G[Guardian Mode<br/>Clerk-authenticated] <-->|Queries, mutations,<br/>authoritative state| C[(Convex backend)]
-    C -->|Generic wake-up| F[Firebase Cloud Messaging]
-    F --> G
-    F --> D[Child Mode<br/>Device-authenticated]
-    D <-->|Policy, commands,<br/>metadata and acknowledgements| C
-    D --> P[Android protection services<br/>Accessibility, Usage Access,<br/>location and WorkManager]
-    P --> L[Local enforcement and<br/>on-device inference]
-```
+Safe Browsing/VPN enforcement is represented in the policy model but is **not part of the hackathon build**.
 
-Convex owns the authoritative supervision relationship, policies, commands, notification state, latest-only data, and lifecycle rules. FCM is only a best-effort wake-up channel; both Android roles reconcile with Convex after delayed, duplicated, reordered, or missed pushes.
+## Requirements
 
-### Enrollment and policy flow
+- Android Studio with Android SDK 36
+- JDK 17
+- Node.js and npm compatible with `package-lock.json`
+- A Convex deployment
+- A Clerk application configured to issue Convex-compatible Guardian JWTs
+- Firebase project/mobile app identifiers for both application IDs
+- Google Maps API key for Guardian map rendering
+- Two Android phones for the complete flow; one phone can host both debug apps for limited development testing
+- Google Play services for QR scanning and FCM
+- Android 8/API 26 or newer; Android 11/API 30+ is required for NSFW screenshot capture
 
-```mermaid
-flowchart TD
-    A[Guardian signs in with Clerk] --> B[Convex bootstraps Guardian Account,<br/>Household and Guardian Device]
-    B --> C[Guardian creates minimal Child Profile]
-    C --> D[Child and Guardian complete<br/>Protection Setup on Child Device]
-    D --> E[Guardian generates five-minute<br/>single-use enrollment QR]
-    E --> F[Child scans and previews<br/>sanitized profile details]
-    F --> G{Guardian confirms<br/>correct Child Profile?}
-    G -->|No| E
-    G -->|Yes| H[Child creates Android Keystore key<br/>and proves possession]
-    H --> I[Convex atomically creates device,<br/>credential and Active Enrollment]
-    I --> J[Child fetches and stores<br/>complete policy snapshot]
-    J --> K[Child acknowledges applied version]
-    K --> L[Supervision becomes active]
-```
-
-Enrollment Codes are stored only as SHA-256 hashes in Convex. After enrollment, Child Mode uses a non-exportable Android Keystore key to obtain 15-minute Child Device JWTs through challenge signing; the enrollment code is not a reusable login credential.
-
-## On-device AI
-
-### Why inference stays on the phone
-
-Children's messages and screens can contain exceptionally sensitive information. Sending that content to a server would turn a safety feature into a content-collection system. Cereveil therefore defines the Child Device as the hard boundary for safety inference:
-
-- raw accessibility text stays in memory on the Child Device;
-- active-window screenshots are temporary inference inputs;
-- no OCR text, screenshots, screen recordings, or captured pixels are uploaded;
-- the Guardian never receives raw detected content;
-- backend logs, analytics, crash reports, and support data must not contain captured content;
-- model limitations are accepted instead of adding server-side reprocessing.
-
-### Active Screen Safety pipeline
-
-Active Screen Safety is one policy-controlled feature containing both detectors. A Guardian must explicitly choose one or more **Monitored Apps**. Cereveil does not automatically monitor newly installed or suggested apps.
-
-```mermaid
-flowchart TD
-    A[Unlocked Child Device] --> B{Active Screen Safety enabled?}
-    B -->|No| Z[No safety inference]
-    B -->|Yes| C{Visible window belongs to<br/>a Guardian-selected Monitored App?}
-    C -->|No| Z
-    C -->|Yes| D{Input type}
-
-    D -->|Visible non-editable<br/>accessibility node text| E[Scam Text Detection<br/>local BERT classifier]
-    D -->|Temporary active-window<br/>pixels| F[NSFW Screen Detection<br/>local CNN classifier]
-
-    E --> G{Positive at configured<br/>sensitivity?}
-    F --> G
-    G -->|No| H[Discard transient input]
-    G -->|Yes| I{Duplicate fingerprint<br/>seen within 10 minutes?}
-    I -->|Yes| H
-    I -->|No| J[Immediate local intervention]
-    J --> K[Create metadata-only<br/>Safety Alert]
-    K --> L{Network available?}
-    L -->|Yes| M[Upload metadata to Convex]
-    L -->|No| N[Queue metadata only<br/>for at most 7 days]
-    N --> M
-    M --> O[Generic Guardian wake-up,<br/>subject to notice cooldown]
-```
-
-### Detector behavior
-
-| Concern | Scam Text Detection | NSFW Screen Detection |
-|---|---|---|
-| Input | Visible, non-editable accessibility node text | Temporary screenshot of the active Monitored App window |
-| Model | On-device BERT classifier | On-device CNN classifier |
-| Excluded input | Editable drafts, OCR, notifications, unopened/background content | Gallery scans, locked/off-screen content, system bars, keyboards, overlays, other apps |
-| Child response | Dismissible Safety Warning, automatically removed after 15 seconds | Non-dismissible blur confined to detected content; no extra dialog, banner, or toast |
-| Guardian data | Detection type, app, timestamp, coarse confidence band | Detection type, app, timestamp, coarse confidence band |
-| Raw content uploaded? | Never | Never |
-
-In split-screen and picture-in-picture, capture, classification, and blur must remain confined to the Monitored App's region. When usable image nodes are unavailable for video, canvas, or custom rendering, the design permits classifying the Monitored App window only—not the whole display.
-
-### Data boundary
-
-```mermaid
-flowchart LR
-    subgraph Device[Child Device — private processing boundary]
-        T[Visible text] --> AI[Local inference]
-        S[Temporary window pixels] --> AI
-        AI --> W[Child-facing warning or blur]
-        AI --> X[Memory-only duplicate fingerprint]
-        AI --> M[Metadata: Child, type, app,<br/>time, confidence band]
-    end
-
-    M --> B[(Convex)]
-    B --> R[Authenticated Guardian Mode]
-
-    T -. never crosses .-> STOP[No backend, Guardian,<br/>FCM, logs or analytics]
-    S -. never crosses .-> STOP
-```
-
-### Incident lifecycle
-
-- A novel positive result creates one local Safety Intervention and one metadata-only Safety Alert.
-- A memory-only fingerprint suppresses repeated inference of the same visible item for ten minutes.
-- Fingerprints are cleared on process death, restart, Active Screen Safety disablement, and End Supervision. They are never uploaded or persisted.
-- Scam and NSFW Guardian Notices have separate, fixed two-minute cooldowns. The cooldown limits immediate notifications, not Child interventions or stored novel alerts.
-- Offline Child Mode may queue only idempotent metadata, for no more than seven days.
-- A delayed alert produces an immediate Guardian Notice only if it reaches Convex within five minutes of detection and the cooldown permits it.
-- Individual metadata-only Safety Alerts expire after one week. Cereveil does not generate weekly or aggregate incident summaries.
-
-### Device requirements and detection behavior
-
-- The app supports Android 8 / API 26 and newer, but **Active Screen Safety requires Android 11 / API 30+** because NSFW capture uses the accessibility screenshot API introduced in Android 11.
-- The two detectors are enabled atomically. An older Child Device cannot silently run Scam Text Detection without NSFW Screen Detection.
-- Accessibility APIs expose only what the active app makes available; inaccessible, image-based, hidden, muted, or unopened scam content will not be detected.
-- Local models constrain accuracy, memory, latency, and battery use. Sensitivity is exposed as `Lower`, `Standard`, or `Higher`, not as raw model thresholds.
-- AI safety output is an assistive signal, not proof of intent or a substitute for conversation, judgment, or emergency services.
-
-The governing decisions are [ADR-0010](docs/adr/0010-limit-scam-detection-to-selected-active-apps.md), [ADR-0011](docs/adr/0011-detect-nsfw-content-from-active-window-screenshots.md), [ADR-0019](docs/adr/0019-intervene-for-the-child-and-alert-the-guardian-together.md), [ADR-0020](docs/adr/0020-keep-safety-alerts-metadata-only.md), [ADR-0036](docs/adr/0036-run-safety-detection-on-device-only.md), [ADR-0056](docs/adr/0056-create-safety-alerts-from-on-device-incidents.md), and [ADR-0086](docs/adr/0086-require-android-11-for-active-screen-safety.md).
-
-## Tech stack
-
-| Layer | Technology |
-|---|---|
-| Android | Kotlin, Android Gradle Plugin, JDK 17, min SDK 26, compile/target SDK 36 |
-| UI | Jetpack Compose, Material 3, Composables UI, Navigation 3 |
-| Android architecture | Product flavors for Guardian/Child roles, ViewModels, coroutines/Flow, WorkManager |
-| Backend | Convex with TypeScript functions, schema validation, scheduled jobs, and HTTP actions |
-| Guardian auth | Clerk Android SDK with Convex JWT integration |
-| Child auth | Android Keystore proof-of-possession and Cereveil-issued 15-minute JWTs |
-| Push | Firebase Cloud Messaging using minimal data wake-ups |
-| Maps | Google Maps SDK for Android with a `geo:` fallback |
-| Enrollment | Google Code Scanner in Child Mode and ZXing QR generation in Guardian Mode |
-| Backend tests | Vitest, `convex-test`, TypeScript |
-| Android tests | JUnit, Compose UI testing, AndroidX Test, Espresso |
-| On-device AI | Local BERT scam-text classification and local CNN NSFW classification |
-
-## Repository structure
+Debug package names:
 
 ```text
-Cereveil/
-├── app/                    # Android application and Guardian/Child product flavors
-│   └── src/
-│       ├── main/           # Shared application, navigation, theme, and UI
-│       ├── guardian/       # Guardian auth, profiles, policy, enrollment, and live features
-│       └── child/          # Child enrollment, capabilities, enforcement, and background work
-├── core/
-│   ├── domain/             # Shared domain-facing Android module
-│   └── network/            # Shared Convex/network Android module
-├── feature/
-│   ├── guardian/           # Guardian feature module boundary
-│   └── child/              # Child feature module boundary
-├── convex/
-│   ├── modules/            # Domain-oriented backend modules
-│   ├── lib/                # Auth, authorization, wrappers, errors, and sensitive-data helpers
-│   ├── schema.ts           # Convex tables, validators, and indexes
-│   ├── http.ts             # Child Device identity and command HTTP routes
-│   └── crons.ts            # Cleanup and lifecycle schedules
-├── tests/                  # Backend integration tests
-├── docs/
-│   ├── adr/                # Architectural decision records
-│   ├── architecture/       # Android/backend structure and data model
-│   ├── design/             # Visual and interaction design system
-│   └── agents/             # Repository workflow documentation
-├── CONTEXT.md              # Canonical domain vocabulary
-└── package.json            # Convex, build, and verification scripts
+com.cereveil.guardian.dev
+com.cereveil.child.dev
 ```
 
-The Android project separates the application shell, shared domain/network code, and role-specific Guardian and Child features. See [android-structure.md](docs/architecture/android-structure.md) for module boundaries and dependency rules.
-
-## Local setup
-
-### Prerequisites
-
-- Android Studio with Android SDK 36 and build tools installed
-- JDK 17 (the Gradle toolchain is configured for Java 17)
-- Node.js and npm compatible with the checked-in `package-lock.json`
-- A Convex account/project
-- A Clerk application configured with a JWT template/audience for Convex
-- Two Firebase Android app registrations, one for each role-specific package:
-  - `com.cereveil.guardian.dev`
-  - `com.cereveil.child.dev`
-- Two Android devices or emulators for the full flow; Google Play services are required for QR scanning and FCM
-- Android 11+ on the Child Device for Active Screen Safety
+## Setup
 
 ### 1. Install dependencies
 
@@ -242,217 +70,197 @@ npm ci
 ./gradlew --version
 ```
 
-Opening the root directory in Android Studio will also synchronize the Gradle project.
+### 2. Configure Android public/mobile values
 
-### 2. Configure Convex
+Create an ignored `.env.local` in the repository root:
 
-Connect the checkout to a Convex deployment:
-
-```bash
-npx convex dev
+```properties
+CONVEX_URL=https://<deployment>.convex.cloud
+CONVEX_SITE_URL=https://<deployment>.convex.site
+CLERK_PUBLISHABLE_KEY=pk_<your-publishable-key>
+FIREBASE_GUARDIAN_APPLICATION_ID=<guardian-firebase-app-id>
+FIREBASE_CHILD_APPLICATION_ID=<child-firebase-app-id>
+FIREBASE_API_KEY=<firebase-web-api-key>
+FIREBASE_PROJECT_ID=<firebase-project-id>
+FIREBASE_GCM_SENDER_ID=<numeric-sender-id>
+GOOGLE_MAPS_API_KEY=<android-restricted-maps-key>
 ```
 
-The backend declares these environment variables in `convex/convex.config.ts`:
+Do not put `CLERK_SECRET_KEY`, FCM service-account JSON/private keys, Convex child-device signing keys, or other server secrets in Android `BuildConfig`. Restrict the Maps and Firebase keys by Android application ID and signing certificate in their provider consoles.
+
+Provider checklist:
+
+1. In Clerk, create the Guardian application and a JWT template for Convex with audience/application ID `convex`; use its issuer domain as `CLERK_JWT_ISSUER_DOMAIN`.
+2. In Firebase, register Android applications for `com.cereveil.guardian.dev` and `com.cereveil.child.dev`, enable Cloud Messaging, and copy their app IDs plus the project API key, project ID, and numeric sender ID into `.env.local`.
+3. For backend push delivery, create a narrowly scoped Firebase service account for FCM HTTP v1 and keep its client email/private key only in Convex environment variables.
+4. Restrict `GOOGLE_MAPS_API_KEY` to the Guardian package and the debug/release certificate fingerprints that will use it.
+
+### 3. Configure Convex
+
+Link or create the development deployment with a one-shot command. On a fresh checkout, the first push can stop on missing environment values after it has created the deployment; set the values below and rerun it.
+
+```bash
+npm run convex:deploy:dev
+```
+
+Set the backend environment values declared by `convex/convex.config.ts`:
 
 | Variable | Required | Purpose |
 |---|---:|---|
-| `CLERK_JWT_ISSUER_DOMAIN` | Yes | Validates Clerk-issued Guardian tokens |
-| `CHILD_DEVICE_JWT_SECRET` | Yes | HMAC secret for short-lived Child Device JWTs; minimum 32 characters |
-| `CHILD_PUSH_TOKEN_ENCRYPTION_SECRET` | Yes | Legacy/fallback token encryption secret; minimum 32 characters |
-| `FCM_TOKEN_ENCRYPTION_KEY_V1` | For FCM | Active AES-GCM key material; minimum 32 characters |
-| `FCM_TOKEN_ENCRYPTION_ACTIVE_VERSION` | For FCM | Set to `1` for the v1 encrypted-token format |
-| `FCM_PROJECT_ID` | For FCM | Firebase/Google Cloud project ID |
-| `FCM_CLIENT_EMAIL` | For FCM | Service-account client email used by the backend |
-| `FCM_PRIVATE_KEY` | For FCM | Service-account private key used to call FCM HTTP v1 |
+| `CLERK_JWT_ISSUER_DOMAIN` | Yes | Guardian JWT issuer |
+| `CHILD_DEVICE_JWT_PRIVATE_JWK` | Yes | ES256 private signing JWK; backend only |
+| `CHILD_DEVICE_JWT_PUBLIC_JWK` | Yes | Matching public verification JWK |
+| `CHILD_DEVICE_JWT_KEY_ID` | Yes | Key identifier included in Child Device JWTs |
+| `CHILD_DEVICE_JWT_ISSUER` | Yes | Public Convex site URL used as the Child Device token issuer/JWKS origin |
+| `CHILD_PUSH_TOKEN_ENCRYPTION_SECRET` | Yes | Legacy/fallback FCM token protection secret |
+| `FCM_TOKEN_ENCRYPTION_KEY_V1` | Full demo | Active AES-GCM token-encryption key |
+| `FCM_TOKEN_ENCRYPTION_ACTIVE_VERSION` | Full demo | Set to `1` when the v1 key is configured |
+| `FCM_PROJECT_ID`, `FCM_CLIENT_EMAIL`, `FCM_PRIVATE_KEY` | Full demo | FCM HTTP v1 service-account configuration; required for push delivery |
+| `REMOTE_AUDIO_STUN_URLS` | No | Optional comma-separated STUN URLs; no TURN relay is configured |
 
-Set values through the Convex CLI or deployment dashboard; never commit them. For example:
+Generate a fresh ES256 JWK pair locally. Do not paste the private line into chat, source control, or `.env.local`:
 
 ```bash
-npx convex env set CLERK_JWT_ISSUER_DOMAIN 'https://<your-clerk-domain>'
-npx convex env set CHILD_DEVICE_JWT_SECRET '<random-secret-at-least-32-characters>'
-npx convex env set CHILD_PUSH_TOKEN_ENCRYPTION_SECRET '<different-random-secret-at-least-32-characters>'
-npx convex env set FCM_TOKEN_ENCRYPTION_KEY_V1 '<different-random-secret-at-least-32-characters>'
+node <<'NODE'
+const { generateKeyPairSync, randomUUID } = require('node:crypto');
+const { privateKey, publicKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
+console.log('CHILD_DEVICE_JWT_KEY_ID=' + randomUUID());
+console.log('CHILD_DEVICE_JWT_PRIVATE_JWK=' + JSON.stringify(privateKey.export({ format: 'jwk' })));
+console.log('CHILD_DEVICE_JWT_PUBLIC_JWK=' + JSON.stringify(publicKey.export({ format: 'jwk' })));
+NODE
+```
+
+Example command shape (use real secrets only in your terminal or deployment dashboard):
+
+```bash
+npx convex env set CLERK_JWT_ISSUER_DOMAIN 'https://<issuer>'
+npx convex env set CHILD_DEVICE_JWT_KEY_ID '<key-id>'
+npx convex env set CHILD_DEVICE_JWT_ISSUER 'https://<your-cereveil-issuer>'
+npx convex env set CHILD_DEVICE_JWT_PRIVATE_JWK '<private-jwk-json>'
+npx convex env set CHILD_DEVICE_JWT_PUBLIC_JWK '<public-jwk-json>'
+npx convex env set CHILD_PUSH_TOKEN_ENCRYPTION_SECRET '<random-32-byte-or-longer-secret>'
+npx convex env set FCM_TOKEN_ENCRYPTION_KEY_V1 '<different-random-32-byte-or-longer-secret>'
 npx convex env set FCM_TOKEN_ENCRYPTION_ACTIVE_VERSION '1'
 ```
 
-Then run the backend in watch mode:
+Set `FCM_PROJECT_ID`, `FCM_CLIENT_EMAIL`, and `FCM_PRIVATE_KEY` from the service account for working push delivery. Use the exact multiline private-key value in the Convex dashboard or carefully quoted CLI input; never store the service-account JSON in the repository.
+
+Keep the backend running during local development:
 
 ```bash
 npm run convex:dev
 ```
 
-### 3. Configure the Android builds
+## Build and install both role builds
 
-Create an ignored `.env.local` file at the repository root:
-
-```properties
-CONVEX_URL=https://<deployment-name>.convex.cloud
-CONVEX_SITE_URL=https://<deployment-name>.convex.site
-CLERK_PUBLISHABLE_KEY=pk_test_...
-
-FIREBASE_GUARDIAN_APPLICATION_ID=1:...:android:...
-FIREBASE_CHILD_APPLICATION_ID=1:...:android:...
-FIREBASE_API_KEY=...
-FIREBASE_PROJECT_ID=...
-FIREBASE_GCM_SENDER_ID=...
-
-GOOGLE_MAPS_API_KEY=...
-```
-
-`CONVEX_URL` is used by the Convex Android client; `CONVEX_SITE_URL` is used by the Child Device identity HTTP endpoints. The Guardian build requires `CLERK_PUBLISHABLE_KEY` at startup. Firebase values enable push registration; the Maps key is Guardian-only.
-
-The project initializes Firebase from these build-time values, so `google-services.json` is not required by the Gradle configuration.
-
-For Maps, create a key restricted to the Guardian package and your debug signing certificate. Follow [development-google-maps.md](docs/development-google-maps.md); do not use an unrestricted key.
-
-### 4. Configure Firebase delivery
-
-Create a narrowly scoped service account for FCM HTTP v1 and set its values only in the Convex deployment:
-
-```bash
-npx convex env set FCM_PROJECT_ID '<firebase-project-id>'
-npx convex env set FCM_CLIENT_EMAIL '<service-account-email>'
-npx convex env set FCM_PRIVATE_KEY '<service-account-private-key>'
-```
-
-Do not put service-account credentials in `.env.local`, an APK, logs, tests, or documentation. The Android Firebase API key and application IDs are client configuration; the service-account private key is a backend secret.
-
-## Build and run
-
-### Build both role-specific APKs
+Build the two debug APKs from `main`:
 
 ```bash
 npm run android:assemble
 ```
 
-Equivalent Gradle command:
-
-```bash
-./gradlew :app:assembleGuardianDebug :app:assembleChildDebug
-```
-
-Outputs are written below:
+The outputs are:
 
 ```text
-app/build/outputs/apk/guardian/debug/
-app/build/outputs/apk/child/debug/
+app/build/outputs/apk/guardian/debug/app-guardian-debug.apk
+app/build/outputs/apk/child/debug/app-child-debug.apk
 ```
 
-The role-specific package IDs differ, so both roles can be installed side by side for a compact demo. For the complete Guardian–Child experience, use two physical Android devices.
-
-### Install from the command line
-
-With a target device connected:
+Install with Android Studio by selecting `guardianDebug` or `childDebug`, or with ADB:
 
 ```bash
-adb devices
-./gradlew :app:installGuardianDebug
-./gradlew :app:installChildDebug
+adb install -r app/build/outputs/apk/guardian/debug/app-guardian-debug.apk
+adb install -r app/build/outputs/apk/child/debug/app-child-debug.apk
 ```
 
-If two devices are attached, install the appropriate APK with `adb -s <serial> install -r <apk-path>`.
+For two physical phones, select the target serial explicitly:
 
-### Run in Android Studio
+```bash
+adb devices -l
+adb -s <guardian-serial> install -r app/build/outputs/apk/guardian/debug/app-guardian-debug.apk
+adb -s <child-serial> install -r app/build/outputs/apk/child/debug/app-child-debug.apk
+```
 
-Select either the `guardianDebug` or `childDebug` build variant, choose the appropriate device, and run the `app` configuration.
+If an older build was signed with a different certificate, uninstall that package first. This clears its local state:
 
-## Using the app
+```bash
+adb -s <serial> uninstall com.cereveil.guardian.dev
+adb -s <serial> uninstall com.cereveil.child.dev
+```
 
-### Guardian Mode
+### Correct first-run order
 
-1. Launch **Cereveil Guardian** and sign in through Clerk.
-2. Read and accept the transparency/privacy introduction.
-3. Create a Child Profile using a display name and birth month/year. Cereveil does not require a legal name, exact birth date, email, phone number, or Child login.
-4. Choose **Set up Child Device** to create a five-minute enrollment QR code.
-5. Keep the code beside the Child Device; do not send or save a screenshot of it.
-6. After enrollment, configure supervision controls and use the Child Profile surfaces for app access, latest location, and current-day screen time.
-7. Wait for Child Mode to acknowledge a new policy before treating it as applied. Offline Child Mode continues enforcing its last accepted policy.
+1. Install and open the **Guardian build**. Sign in through Clerk and accept the supervision disclosure.
+2. Create a Child Profile using only a display name and birth month/year.
+3. Install and open the **Child build** on the Child phone. Complete all seven guided settings with the Child present:
+   - enable Cereveil Accessibility;
+   - grant Usage Access;
+   - grant precise location and microphone;
+   - set Location to **Allow all the time** in Android App Info;
+   - allow notifications;
+   - allow the battery-optimization exemption;
+   - enable automatic date/time and automatic time zone.
+4. Return to Child Mode until it reports `7 of 7 complete`, then continue to the scanner.
+5. In Guardian Mode, generate the enrollment QR for that Child Profile. It expires after five minutes and is single-use.
+6. Scan it in Child Mode, verify the displayed Child name on both phones, and confirm enrollment.
+7. Wait for Child Mode to show **Protection is on**. In Guardian Mode, check that the desired and applied policy versions agree.
+8. For the Local AI demo, use debug builds, open the Child's protection settings in Guardian Mode, enable a detector, and explicitly select a supported monitored app. Keep Accessibility enabled on the Child phone.
 
-### Child Mode
+On some OEMs, background restrictions are stricter than stock Android. Also allow background activity/autostart for Cereveil Child if the vendor exposes those controls.
 
-1. Launch **Cereveil Child** with the Child and Guardian present.
-2. Complete the seven-step Protection Setup:
-   - Accessibility
-   - Usage Access
-   - precise location and microphone
-   - background location
-   - notifications
-   - battery-optimization exemption
-   - automatic date, time, and time zone
-3. Select **Check settings and continue**. Child Mode cannot scan an enrollment code until required capabilities are ready.
-4. Scan the QR shown in Guardian Mode.
-5. Verify the sanitized Child Profile preview, then confirm enrollment.
-6. Child Mode creates device-specific key material, completes enrollment, fetches the initial policy, and reports when protection is applied.
+## Sample Local AI behavior
 
-## Testing
+Scam input visible in a selected supported messaging app:
 
-Run all backend tests:
+```text
+KYC expired! Update Aadhaar now or your account will be frozen: bit.ly/verify
+```
+
+Expected result: local classification into one of the fraud labels, a Child-facing warning for a positive label, and a metadata-only Guardian alert. The raw sentence is neither stored in Convex nor shown to the Guardian.
+
+Legitimate hard-negative input:
+
+```text
+Your OTP is 493827. Valid for 5 minutes. Do not share it with anyone.
+```
+
+Expected result: normally `legitimate`/safe, with no intervention. Model outputs are probabilistic; false positives and false negatives remain possible.
+
+NSFW input: display a test image inside an explicitly selected foreground app.
+
+Expected result: positive image regions are covered by an accessibility overlay containing a blurred copy of the region. The screenshot bitmap is transient and is not uploaded or saved by Cereveil.
+
+## Verify the project
 
 ```bash
 npm test
-```
-
-Run TypeScript validation:
-
-```bash
 npm run typecheck
-```
-
-Compile both Android variants:
-
-```bash
 npm run android:compile
+npm run android:assemble
+./gradlew :feature:child:ml:test
 ```
 
-Run Android unit tests:
+Connected-device model smoke test (optional; not an accuracy benchmark):
 
 ```bash
-./gradlew testGuardianDebugUnitTest testChildDebugUnitTest
+./gradlew :app:connectedChildDebugAndroidTest \
+  -Pandroid.testInstrumentationRunnerArguments.class=com.cereveil.child.protection.ChildDeviceSmokeInstrumentedTest#productionSafetyModelsInitializeAndRunOnDevice
 ```
 
-Run connected instrumentation tests with a device/emulator available:
+## Documentation set
 
-```bash
-./gradlew connectedGuardianDebugAndroidTest connectedChildDebugAndroidTest
-```
+- [ARCHITECTURE.md](ARCHITECTURE.md) — system diagram, model pipeline, data flow, and design decisions
+- [TECHNICAL_REPORT.md](TECHNICAL_REPORT.md) — model/runtime details, optimization, sizes, compute, and device facts
+- [LOCAL_AI_VERIFICATION.md](LOCAL_AI_VERIFICATION.md) — exact on-device/cloud boundary
+- [EVALUATION.md](EVALUATION.md) — retained quality evidence, methodology, baselines, and failure cases
+- [PRIVACY_AND_SAFETY.md](PRIVACY_AND_SAFETY.md) — permissions, storage, retention, risks, and mitigations
+- [ATTRIBUTION.md](ATTRIBUTION.md) — models, datasets, libraries, APIs, and pre-existing work
+- [CONTEXT.md](CONTEXT.md) and [docs/adr](docs/adr) — domain vocabulary and detailed decisions
 
-End-to-end behavior depends on Android capabilities, two authenticated roles, network transitions, and FCM delivery. Use the repository's manual guides:
+## Submission caveats
 
-- [Enforcement, location, and screen-time smoke test](docs/enforcement-location-screen-time-smoke-test.md)
-- [Development FCM smoke test](docs/development-fcm-smoke-test.md)
-- [Google Maps development setup](docs/development-google-maps.md)
-
-When recording test results, never capture Child identity, coordinates, installed-app lists, per-app totals, tokens, policy bodies, private keys, or authorization headers.
-
-## Privacy and security
-
-Cereveil's architecture follows data minimization and explicit lifecycle rules:
-
-- Child Profiles use minimal identity data and do not require contact information or an exact birth date.
-- Every Convex operation is authenticated and authorized by actor and owned resource; authentication alone is not treated as authorization.
-- Guardian and Child identities are separate. Clerk credentials do not leak into Child Mode, and Child Device credentials do not grant Guardian authority.
-- Child Device credentials are independently revocable and bound to one Active Enrollment.
-- FCM tokens are delivery endpoints, not identities, and are encrypted at rest by the application layer.
-- Push messages contain generic categories and opaque record IDs; clients fetch authoritative content after authentication.
-- Only the latest location is stored. Location history is not retained.
-- Screen time contains current-day Android totals, not raw events, exact open/close times, or historical timelines.
-- Safety Alerts are metadata-only and expire after one week; no aggregate incident summaries are generated.
-- End Supervision revokes device access and removes Child-specific backend and local operational state.
-- Logs and diagnostics must exclude raw screen/text/audio content, exact location history, notification bodies, and sensitive credentials.
-
-## Architecture documentation
-
-Start with these documents when changing behavior:
-
-- [CONTEXT.md](CONTEXT.md) — canonical product language and domain definitions
-- [Android structure](docs/architecture/android-structure.md) — module boundaries and Android architecture
-- [Backend structure](docs/architecture/backend-structure.md) — Convex wrappers and feature-module conventions
-- [Backend data model](docs/architecture/backend-data-model.md) — table shapes, ownership, retention, and lifecycle rules
-- [Design system](docs/design/DESIGN.md) — the calm-shelter visual language, accessibility, and trust constraints
-- [Architecture decisions](docs/adr/) — the source of truth for product and engineering trade-offs
-
-When working on Convex code, read `convex/_generated/ai/guidelines.md` before making changes; its generated Convex API guidance overrides general assumptions about Convex patterns.
-
-## License
-
-Licensed under the [Apache License 2.0](LICENSE).
+- Active Screen Safety is a development-only implementation in the current branch.
+- Inference latency and peak memory have not been formally benchmarked for this submission.
+- The retained fraud-model notebook defines the evaluation, but its numeric execution outputs and underlying private training records are not committed. No unsupported accuracy number is claimed.
+- The upstream NSFW model card reports 98.56% on its proprietary 20,000-image test split; that is an upstream baseline, not a measured score for Cereveil's quantized Android pipeline.
+- Cereveil is assistive family-safety software, not proof of wrongdoing, an emergency service, or a substitute for Guardian judgment and conversation.
