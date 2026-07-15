@@ -75,7 +75,9 @@ export async function retireGuardianDevice(
     guardianAccount._id,
     args.guardianInstallationId,
   );
-  if (device === null) return { retired: false, serverNow };
+  // Retirement is idempotent. If this account no longer has the installation,
+  // the desired postcondition is already true and the client may finish logout.
+  if (device === null) return { retired: true, serverNow };
   if (device.status === "revoked") return { retired: true, serverNow };
 
   await ctx.db.patch("guardianDevices", device._id, {

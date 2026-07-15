@@ -144,6 +144,15 @@ describe("Guardian Device logout", () => {
     })).toMatchObject({ retired: true });
   });
 
+  test("treats an already-absent installation as retired for an existing Guardian Account", async () => {
+    const t = backend();
+    await t.withIdentity(identity).mutation(bootstrapGuardian, bootstrapArgs);
+
+    expect(await t.withIdentity(identity).mutation(retireGuardianDevice, {
+      guardianInstallationId: "already-absent-installation",
+    })).toMatchObject({ retired: true });
+  });
+
   test("cannot retire another Guardian Account's installation", async () => {
     const t = backend();
     const bootstrap = await t.withIdentity(identity).mutation(bootstrapGuardian, bootstrapArgs);
