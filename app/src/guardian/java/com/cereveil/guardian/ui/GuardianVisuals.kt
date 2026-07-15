@@ -3,8 +3,10 @@ package com.cereveil.guardian.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -26,20 +28,31 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.automirrored.filled.ShowChart
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.Shapes
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -47,6 +60,7 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -94,21 +108,97 @@ private val GuardianColorScheme =
     onErrorContainer = Color(0xFF410002),
   )
 
+private val GuardianDarkColorScheme =
+  darkColorScheme(
+    primary = Color(0xFF77A7FF),
+    onPrimary = Color(0xFF071A3A),
+    primaryContainer = Color(0xFF152C50),
+    onPrimaryContainer = Color(0xFFDCE6FF),
+    secondary = Color(0xFFFFB66B),
+    onSecondary = Color(0xFF4D2600),
+    secondaryContainer = Color(0xFF35230F),
+    onSecondaryContainer = Color(0xFFFFDDB3),
+    tertiary = Color(0xFF68D8AE),
+    onTertiary = Color(0xFF003828),
+    tertiaryContainer = Color(0xFF0D3327),
+    onTertiaryContainer = Color(0xFFC1F6E1),
+    background = Color.Black,
+    onBackground = Color(0xFFF0F4F8),
+    surface = Color(0xFF07121D),
+    onSurface = Color(0xFFF0F4F8),
+    surfaceVariant = Color(0xFF0D1C2A),
+    onSurfaceVariant = Color(0xFF9CA9B8),
+    outline = Color(0xFF425569),
+    outlineVariant = Color(0xFF223548),
+    error = Color(0xFFFFB4AB),
+    errorContainer = Color(0xFF93000A),
+    onErrorContainer = Color(0xFFFFDAD6),
+  )
+
+@Immutable
+data class GuardianAppearance(
+  val darkMode: Boolean,
+  val setDarkMode: (Boolean) -> Unit,
+)
+
+val LocalGuardianAppearance =
+  staticCompositionLocalOf<GuardianAppearance> {
+    error("GuardianTheme is not present")
+  }
+
 @Composable
 fun GuardianTheme(content: @Composable () -> Unit) {
-  MaterialTheme(
-    colorScheme = GuardianColorScheme,
-    typography = Typography,
-    shapes =
-      Shapes(
-        extraSmall = RoundedCornerShape(8.dp),
-        small = RoundedCornerShape(12.dp),
-        medium = RoundedCornerShape(16.dp),
-        large = RoundedCornerShape(24.dp),
-        extraLarge = RoundedCornerShape(32.dp),
-      ),
-    content = content,
-  )
+  val context = LocalContext.current
+  val systemDark = isSystemInDarkTheme()
+  val preferences = remember(context) { context.getSharedPreferences("guardian_appearance", 0) }
+  var savedDarkMode by remember(preferences) {
+    mutableStateOf<Boolean?>(
+      if (preferences.contains("dark_mode")) preferences.getBoolean("dark_mode", systemDark) else null,
+    )
+  }
+  val darkMode = savedDarkMode ?: systemDark
+  val appearance = remember(darkMode, preferences) {
+    GuardianAppearance(darkMode) { enabled ->
+      savedDarkMode = enabled
+      preferences.edit().putBoolean("dark_mode", enabled).apply()
+    }
+  }
+  CompositionLocalProvider(LocalGuardianAppearance provides appearance) {
+    MaterialTheme(
+      colorScheme = if (darkMode) GuardianDarkColorScheme else GuardianColorScheme,
+      typography = Typography,
+      shapes =
+        Shapes(
+          extraSmall = RoundedCornerShape(8.dp),
+          small = RoundedCornerShape(12.dp),
+          medium = RoundedCornerShape(16.dp),
+          large = RoundedCornerShape(24.dp),
+          extraLarge = RoundedCornerShape(32.dp),
+        ),
+      content = content,
+    )
+  }
+}
+
+@Composable
+fun GuardianDarkModeToggle(modifier: Modifier = Modifier) {
+  val appearance = LocalGuardianAppearance.current
+  GuardianCard(modifier) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+      Box(
+        Modifier.size(42.dp).clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.primaryContainer),
+        contentAlignment = Alignment.Center,
+      ) {
+        Icon(Icons.Default.DarkMode, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+      }
+      Spacer(Modifier.width(14.dp))
+      Column(Modifier.weight(1f)) {
+        Text("Dark mode", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+        Text("Use the darker Guardian dashboard", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+      }
+      Switch(checked = appearance.darkMode, onCheckedChange = appearance.setDarkMode)
+    }
+  }
 }
 
 @Composable
@@ -119,17 +209,19 @@ fun GuardianScreen(
   content: @Composable ColumnScope.() -> Unit,
 ) {
   val scrolling = if (scrollable) Modifier.verticalScroll(rememberScrollState()) else Modifier
-  Column(
-    modifier =
-      modifier
-        .fillMaxSize()
-        .background(MaterialTheme.colorScheme.background)
-        .safeDrawingPadding()
-        .then(scrolling)
-        .padding(start = 20.dp, end = 20.dp, top = 12.dp, bottom = bottomContentPadding),
-    verticalArrangement = Arrangement.spacedBy(12.dp),
-    content = content,
-  )
+  CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onBackground) {
+    Column(
+      modifier =
+        modifier
+          .fillMaxSize()
+          .background(MaterialTheme.colorScheme.background)
+          .safeDrawingPadding()
+          .then(scrolling)
+          .padding(start = 20.dp, end = 20.dp, top = 12.dp, bottom = bottomContentPadding),
+      verticalArrangement = Arrangement.spacedBy(12.dp),
+      content = content,
+    )
+  }
 }
 
 @Composable
@@ -148,7 +240,7 @@ fun GuardianHeader(modifier: Modifier = Modifier, role: String = "Guardian", com
       )
       Text(role, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
-    StatusPill("Guardian", GuardianPrimary, MaterialTheme.colorScheme.primaryContainer)
+    StatusPill("Guardian", MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.primaryContainer)
   }
 }
 
@@ -164,6 +256,7 @@ fun GuardianTitle(
       title,
       style = MaterialTheme.typography.headlineMedium,
       fontWeight = FontWeight.Bold,
+      color = MaterialTheme.colorScheme.onBackground,
       textAlign = if (centered) TextAlign.Center else TextAlign.Start,
       modifier = Modifier.fillMaxWidth(),
     )
@@ -217,8 +310,9 @@ fun GuardianFeatureCard(
   subtitle: String,
   status: String? = null,
   onClick: () -> Unit,
+  modifier: Modifier = Modifier,
 ) {
-  GuardianCard(onClick = onClick) {
+  GuardianCard(modifier = modifier.height(126.dp), onClick = onClick) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
       Box(
         Modifier.size(42.dp).clip(RoundedCornerShape(12.dp)).background(iconTint.copy(alpha = 0.13f)),
@@ -238,9 +332,77 @@ fun GuardianFeatureCard(
 }
 
 @Composable
+fun GuardianProtectionCard(
+  title: String,
+  supportingText: String,
+  attentionText: String? = null,
+  modifier: Modifier = Modifier,
+) {
+  GuardianCard(modifier = modifier, containerColor = MaterialTheme.colorScheme.surface) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+      Box(
+        Modifier.size(40.dp).clip(CircleShape).background(MaterialTheme.colorScheme.tertiary.copy(alpha = 0.14f)),
+        contentAlignment = Alignment.Center,
+      ) {
+        Icon(Icons.Default.Shield, contentDescription = null, tint = MaterialTheme.colorScheme.tertiary, modifier = Modifier.size(21.dp))
+      }
+      Spacer(Modifier.width(14.dp))
+      Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+        Text(supportingText, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+      }
+    }
+    attentionText?.let {
+      Surface(color = MaterialTheme.colorScheme.errorContainer, contentColor = MaterialTheme.colorScheme.onErrorContainer, shape = RoundedCornerShape(10.dp)) {
+        Text(it, modifier = Modifier.fillMaxWidth().padding(12.dp), style = MaterialTheme.typography.bodyMedium)
+      }
+    }
+  }
+}
+
+@Composable
+fun GuardianRemoteOperationCard(
+  icon: ImageVector,
+  label: String,
+  accent: Color,
+  onClick: () -> Unit,
+  modifier: Modifier = Modifier,
+) {
+  ElevatedCard(
+    onClick = onClick,
+    modifier = modifier.aspectRatio(1f).border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(20.dp)),
+    shape = RoundedCornerShape(20.dp),
+    colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surface),
+  ) {
+    Column(
+      Modifier.fillMaxSize().padding(16.dp),
+      horizontalAlignment = Alignment.CenterHorizontally,
+      verticalArrangement = Arrangement.Center,
+    ) {
+      Box(
+        Modifier.size(58.dp).clip(CircleShape).background(accent.copy(alpha = 0.16f)),
+        contentAlignment = Alignment.Center,
+      ) {
+        Icon(icon, contentDescription = null, tint = accent, modifier = Modifier.size(29.dp))
+      }
+      Spacer(Modifier.height(14.dp))
+      Text(label, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center)
+    }
+  }
+}
+
+@Composable
 fun GuardianSectionHeader(title: String, action: String? = null, onAction: () -> Unit = {}) {
-  Row(Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 2.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-    Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+  Row(
+    Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 2.dp),
+    horizontalArrangement = Arrangement.SpaceBetween,
+    verticalAlignment = Alignment.CenterVertically,
+  ) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+      Box(Modifier.width(4.dp).height(28.dp).background(MaterialTheme.colorScheme.primary, RoundedCornerShape(3.dp)))
+      Spacer(Modifier.width(10.dp))
+      Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+    }
     action?.let {
       Text(
         it,
@@ -281,13 +443,31 @@ fun GuardianPrimaryButton(text: String, onClick: () -> Unit, modifier: Modifier 
 }
 
 @Composable
-fun GuardianSecondaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
+fun GuardianSecondaryButton(
+  text: String,
+  onClick: () -> Unit,
+  modifier: Modifier = Modifier,
+  enabled: Boolean = true,
+  fillWidth: Boolean = true,
+  leadingIcon: ImageVector? = null,
+) {
+  val sizedModifier = if (fillWidth) modifier.fillMaxWidth() else modifier
   UnstyledButton(
     onClick = onClick,
     enabled = enabled,
-    modifier = modifier.fillMaxWidth().height(50.dp).border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(14.dp)),
+    modifier =
+      sizedModifier.height(50.dp)
+        .alpha(if (enabled) 1f else 0.58f)
+        .background(MaterialTheme.colorScheme.primaryContainer, RoundedCornerShape(14.dp))
+        .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.32f), RoundedCornerShape(14.dp)),
   ) {
-    Text(text, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+    Row(horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+      leadingIcon?.let {
+        Icon(it, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+        Spacer(Modifier.width(9.dp))
+      }
+      Text(text, color = MaterialTheme.colorScheme.onPrimaryContainer, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+    }
   }
 }
 
