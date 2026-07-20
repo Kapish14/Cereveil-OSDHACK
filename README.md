@@ -21,6 +21,7 @@ The central privacy boundary is simple: **message text and captured screen pixel
 | NSFW screen | Temporary screenshot/regions from a selected foreground app | Quantized `Marqo/nsfw-image-detection-384`, INT8 ONNX, ONNX Runtime Android | Content-aligned blur overlay | Type, app package, time, policy version, coarse confidence band |
 
 Both models are bundled inside the Child APK and run without a network connection. There is no cloud inference API, remote OCR, screenshot upload, or raw-message upload. Current implementation details and limitations are in [LOCAL_AI_VERIFICATION.md](LOCAL_AI_VERIFICATION.md) and [EVALUATION.md](EVALUATION.md).
+https://github.com/Harsimran-singh-7765/nsfw-intent-fusion
 
 Active Screen Safety is intentionally exposed only in **debug/development builds** while accessibility screenshot behavior and distribution-policy compliance are validated. Release builds reject policies that enable these detectors.
 
